@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.environment_context_injector",
+  "version": "1.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "环境信息注入",
+    "en": "Environment Context Injection"
+  },
+  "description": {
+    "zh": "在发送消息时注入时间、天气、地点、电量和设备信息，支持手动/自动地点、多地址解析与多天气源。",
+    "en": "Inject time, weather, location, battery, and device information with configurable location, geocoding, and weather providers."
+  },
+  "enabled_by_default": false,
+  "subpackages": []
+}

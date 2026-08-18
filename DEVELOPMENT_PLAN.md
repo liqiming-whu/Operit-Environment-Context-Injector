@@ -1,0 +1,25 @@
+# 开发计划
+
+## 目标
+
+基于 Operit 官方 message_insert 开发独立环境信息注入 ToolPkg，只注入时间、天气、地点、电量和设备信息。
+
+## 成功标准
+
+- 保留总开关、随消息保存、注入总超时（默认 10 秒）和五个项目开关。
+- 地点支持手动地址与自动定位，高精度开关仅自动定位生效。
+- 反向地址解析支持 auto/Nominatim/BigDataCloud/Photon。
+- 天气支持 Open-Meteo/MET Norway/wttr.in。
+- 设置 UI 提供动态规则摘要、注入内容预览和手动测试。
+- 同一次注入中天气与地点复用一个位置快照。
+- 生成一个显性文本附件；关闭保存时仅发给模型、不落聊天历史。
+- TypeScript 编译、静态检查、ToolPkg 安装、UI、工具箱菜单和真实消息 Hook 通过。
+
+## 当前状态
+
+- [x] 核对官方 message_insert 的 Prompt Hook、附件格式、SharedPreferences 和 Compose UI。
+- [x] 核对 SillyTavern Environment Context v1.3.0 的三天气源与三反向解析设计。
+- [x] 实现共享设置、采集、天气、地址和附件构建。
+- [x] 实现设置 UI、条件显隐、预览和手动测试。
+- [x] TypeScript 编译、产物语法检查、模拟宿主测试、包结构检查和 ToolPkg 调试安装。
+- [x] 重启 Operit 后完成设置页真机交互、真实定位/天气、菜单联动和两种消息 Hook 回归；用户确认测试功能正常，真实附件包含五类信息。

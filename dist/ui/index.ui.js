@@ -1,0 +1,267 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = Screen;
+const shared_1 = require("../shared");
+function state(ctx, key, initial) {
+    const pair = ctx.useState(key, initial);
+    return { value: pair[0], set: pair[1] };
+}
+const surfaceStyle = {
+    fillMaxWidth: true,
+    shape: { cornerRadius: 10 },
+    containerColor: "surfaceVariant",
+    alpha: 0.42,
+};
+function title(ctx, icon, text) {
+    return ctx.UI.Row({ verticalAlignment: "center" }, [
+        ctx.UI.Icon({ name: icon, tint: "primary", size: 20 }),
+        ctx.UI.Spacer({ width: 8 }),
+        ctx.UI.Text({ text, style: "titleMedium", fontWeight: "bold", color: "primary" }),
+    ]);
+}
+function divider(ctx) {
+    return ctx.UI.HorizontalDivider({ padding: { horizontal: 14 }, color: "outlineVariant" });
+}
+function toggle(ctx, label, description, checked, onCheckedChange, enabled = true) {
+    return ctx.UI.Row({
+        fillMaxWidth: true,
+        padding: { horizontal: 14, vertical: 11 },
+        verticalAlignment: "center",
+        horizontalArrangement: "spaceBetween",
+    }, [
+        ctx.UI.Column({ weight: 1, spacing: 3 }, [
+            ctx.UI.Text({ text: label, style: "bodyMedium", fontWeight: "medium" }),
+            ctx.UI.Text({ text: description, style: "bodySmall", color: "onSurfaceVariant" }),
+        ]),
+        ctx.UI.Spacer({ width: 12 }),
+        ctx.UI.Switch({ checked, enabled, onCheckedChange }),
+    ]);
+}
+function radio(ctx, label, description, value, selected, onSelect) {
+    return ctx.UI.Row({ fillMaxWidth: true, padding: { horizontal: 14, vertical: 8 }, verticalAlignment: "center" }, [
+        ctx.UI.RadioButton({ selected: selected === value, onClick: () => onSelect(value) }),
+        ctx.UI.Spacer({ width: 10 }),
+        ctx.UI.Column({ weight: 1, spacing: 2 }, [
+            ctx.UI.Text({ text: label, style: "bodyMedium" }),
+            ctx.UI.Text({ text: description, style: "bodySmall", color: "onSurfaceVariant" }),
+        ]),
+    ]);
+}
+function card(ctx, children) {
+    return ctx.UI.Surface(surfaceStyle, [ctx.UI.Column({ fillMaxWidth: true }, children)]);
+}
+function Screen(ctx) {
+    const initial = shared_1.DEFAULT_SETTINGS;
+    const master = state(ctx, "master", initial.masterEnabled);
+    const persist = state(ctx, "persist", initial.persistInjectedContent);
+    const timeout = state(ctx, "timeout", String(initial.injectionTimeoutSeconds));
+    const injectTime = state(ctx, "injectTime", initial.injectTime);
+    const injectWeather = state(ctx, "injectWeather", initial.injectWeather);
+    const injectLocation = state(ctx, "injectLocation", initial.injectLocation);
+    const injectBattery = state(ctx, "injectBattery", initial.injectBattery);
+    const injectDevice = state(ctx, "injectDevice", initial.injectDevice);
+    const locationMode = state(ctx, "locationMode", initial.locationMode);
+    const manualAddress = state(ctx, "manualAddress", initial.manualAddress);
+    const precise = state(ctx, "precise", initial.usePreciseLocation);
+    const reverse = state(ctx, "reverse", initial.reverseGeocodingProvider);
+    const weather = state(ctx, "weather", initial.weatherProvider);
+    const preview = state(ctx, "preview", "尚未获取预览。点击下方按钮后只读取环境，不会写入聊天记录。");
+    const status = state(ctx, "status", "");
+    const running = state(ctx, "running", false);
+    const initialized = state(ctx, "initialized", false);
+    const sync = (next) => {
+        master.set(next.masterEnabled);
+        persist.set(next.persistInjectedContent);
+        timeout.set(String(next.injectionTimeoutSeconds));
+        injectTime.set(next.injectTime);
+        injectWeather.set(next.injectWeather);
+        injectLocation.set(next.injectLocation);
+        injectBattery.set(next.injectBattery);
+        injectDevice.set(next.injectDevice);
+        locationMode.set(next.locationMode);
+        manualAddress.set(next.manualAddress);
+        precise.set(next.usePreciseLocation);
+        reverse.set(next.reverseGeocodingProvider);
+        weather.set(next.weatherProvider);
+    };
+    const patch = (value) => {
+        try {
+            sync((0, shared_1.saveSettings)(value));
+            status.set("");
+        }
+        catch (error) {
+            status.set(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+    const current = () => ({
+        masterEnabled: master.value,
+        persistInjectedContent: persist.value,
+        injectionTimeoutSeconds: Number(timeout.value),
+        injectTime: injectTime.value,
+        injectWeather: injectWeather.value,
+        injectLocation: injectLocation.value,
+        injectBattery: injectBattery.value,
+        injectDevice: injectDevice.value,
+        locationMode: locationMode.value,
+        manualAddress: manualAddress.value,
+        usePreciseLocation: precise.value,
+        reverseGeocodingProvider: reverse.value,
+        weatherProvider: weather.value,
+    });
+    const applyTextSettings = () => {
+        const seconds = Number(timeout.value.trim());
+        if (!Number.isFinite(seconds) || seconds < 3 || seconds > 60) {
+            status.set("注入超时必须是 3 至 60 秒之间的整数。");
+            return false;
+        }
+        if (locationMode.value === "manual" && !manualAddress.value.trim()) {
+            status.set("手动地址不能为空。");
+            return false;
+        }
+        patch({ injectionTimeoutSeconds: Math.round(seconds), manualAddress: manualAddress.value });
+        status.set("设置已保存。");
+        return true;
+    };
+    const runPreview = async (manualTest) => {
+        if (running.value || !applyTextSettings())
+            return;
+        running.set(true);
+        status.set(manualTest ? "正在手动测试环境采集…" : "正在生成预览…");
+        const started = Date.now();
+        try {
+            const content = await (0, shared_1.buildEnvironmentPreview)(current());
+            preview.set(content || "没有启用任何注入项目。");
+            const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+            const partial = content.includes("错误:");
+            status.set(manualTest
+                ? `${partial ? "测试完成，但部分信息不可用" : "测试通过"}，耗时 ${elapsed} 秒。`
+                : `预览已更新，耗时 ${elapsed} 秒。`);
+        }
+        catch (error) {
+            status.set(`测试失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        finally {
+            running.set(false);
+        }
+    };
+    const children = [
+        ctx.UI.Row({ verticalAlignment: "center" }, [
+            ctx.UI.Icon({ name: "public", tint: "primary", size: 25 }),
+            ctx.UI.Spacer({ width: 8 }),
+            ctx.UI.Text({ text: "环境信息注入", style: "headlineSmall", fontWeight: "bold" }),
+        ]),
+        ctx.UI.Text({
+            text: "仅注入时间、天气、地点、电量和设备信息。网络或权限失败会显示错误行，不阻塞消息发送。",
+            style: "bodyMedium",
+            color: "onSurfaceVariant",
+        }),
+        title(ctx, "settings", "注入规则"),
+        card(ctx, [
+            toggle(ctx, "启用环境信息注入", "与输入框菜单中的总开关联动", master.value, value => patch({ masterEnabled: value })),
+            divider(ctx),
+            toggle(ctx, "注入内容随消息保存", "开启：写入消息；关闭：只在发给模型前临时注入", persist.value, value => patch({ persistInjectedContent: value })),
+            divider(ctx),
+            ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+                ctx.UI.TextField({
+                    label: "注入总超时（秒）",
+                    value: timeout.value,
+                    onValueChange: timeout.set,
+                    singleLine: true,
+                }),
+                ctx.UI.Text({ text: "允许 3–60 秒，默认 10 秒。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ctx.UI.Button({ text: "保存超时和地址", fillMaxWidth: true, onClick: () => { applyTextSettings(); } }),
+            ]),
+        ]),
+        title(ctx, "bolt", "注入项目"),
+        card(ctx, [
+            toggle(ctx, "时间", "本地日期、时间、时区和星期", injectTime.value, value => patch({ injectTime: value })),
+            divider(ctx),
+            toggle(ctx, "天气", "当前天气、温度、湿度和风速", injectWeather.value, value => patch({ injectWeather: value })),
+            divider(ctx),
+            toggle(ctx, "地点", "地址、坐标、精度和数据来源", injectLocation.value, value => patch({ injectLocation: value })),
+            divider(ctx),
+            toggle(ctx, "电量", "电池百分比与充电状态", injectBattery.value, value => patch({ injectBattery: value })),
+            divider(ctx),
+            toggle(ctx, "设备信息", "设备名称、型号和 Android 版本", injectDevice.value, value => patch({ injectDevice: value })),
+        ]),
+        title(ctx, "locationOn", "地点来源"),
+        card(ctx, [
+            radio(ctx, "设备自动定位", "调用 Operit 定位接口", "auto", locationMode.value, value => patch({ locationMode: value })),
+            divider(ctx),
+            radio(ctx, "手动地址", "先把地址转换为坐标，天气与地点共用", "manual", locationMode.value, value => patch({ locationMode: value })),
+        ]),
+    ];
+    if (locationMode.value === "manual") {
+        children.push(card(ctx, [
+            ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+                ctx.UI.TextField({
+                    label: "手动地址",
+                    placeholder: "例如：武汉市洪山区",
+                    value: manualAddress.value,
+                    onValueChange: manualAddress.set,
+                    singleLine: true,
+                }),
+                ctx.UI.Text({ text: "修改后点击“保存超时和地址”。", style: "bodySmall", color: "onSurfaceVariant" }),
+            ]),
+        ]));
+    }
+    else {
+        children.push(card(ctx, [
+            toggle(ctx, "高精度定位", "可能更慢、耗电更多，并需要相应权限", precise.value, value => patch({ usePreciseLocation: value })),
+        ]));
+        children.push(title(ctx, "map", "反向地址解析"));
+        children.push(card(ctx, [
+            radio(ctx, "Auto", "按 Nominatim → BigDataCloud → Photon 顺序容错", "auto", reverse.value, value => patch({ reverseGeocodingProvider: value })),
+            divider(ctx),
+            radio(ctx, "Nominatim", "OpenStreetMap 反向地址服务", "nominatim", reverse.value, value => patch({ reverseGeocodingProvider: value })),
+            divider(ctx),
+            radio(ctx, "BigDataCloud", "免密钥反向地址服务", "bigdatacloud", reverse.value, value => patch({ reverseGeocodingProvider: value })),
+            divider(ctx),
+            radio(ctx, "Photon", "基于 OpenStreetMap 的反向地址服务", "photon", reverse.value, value => patch({ reverseGeocodingProvider: value })),
+        ]));
+    }
+    children.push(title(ctx, "cloud", "天气供应商"));
+    children.push(card(ctx, [
+        radio(ctx, "Open-Meteo", "默认天气源", "open-meteo", weather.value, value => patch({ weatherProvider: value })),
+        divider(ctx),
+        radio(ctx, "MET Norway", "失败时自动回退 Open-Meteo", "met-norway", weather.value, value => patch({ weatherProvider: value })),
+        divider(ctx),
+        radio(ctx, "wttr.in", "失败或超时时自动回退 Open-Meteo", "wttr.in", weather.value, value => patch({ weatherProvider: value })),
+    ]));
+    children.push(title(ctx, "visibility", "预览与测试"));
+    children.push(ctx.UI.Row({ fillMaxWidth: true, horizontalArrangement: "spaceBetween" }, [
+        ctx.UI.Button({ text: running.value ? "处理中…" : "更新注入预览", enabled: !running.value, weight: 1, onClick: () => runPreview(false) }),
+        ctx.UI.Spacer({ width: 10 }),
+        ctx.UI.Button({ text: running.value ? "处理中…" : "手动测试", enabled: !running.value, weight: 1, onClick: () => runPreview(true) }),
+    ]));
+    if (status.value) {
+        children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: status.value.includes("失败") ? "errorContainer" : "primaryContainer" }, [
+            ctx.UI.Text({ text: status.value, padding: 12, style: "bodyMedium" }),
+        ]));
+    }
+    children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: "surface", shape: { cornerRadius: 10 } }, [
+        ctx.UI.Column({ padding: 14, spacing: 8 }, [
+            ctx.UI.Text({ text: "注入内容预览", style: "titleSmall", fontWeight: "bold" }),
+            ctx.UI.Text({ text: preview.value, style: "bodySmall", color: "onSurfaceVariant" }),
+        ]),
+    ]));
+    children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: "secondaryContainer" }, [
+        ctx.UI.Text({
+            padding: 12,
+            text: `${master.value ? "已启用" : "已关闭"}；${persist.value ? "随消息保存" : "仅临时发给模型"}；地点：${locationMode.value === "auto" ? "自动定位" : manualAddress.value || "未填写"}；天气：${weather.value}。`,
+            style: "bodySmall",
+            color: "onSecondaryContainer",
+        }),
+    ]));
+    return ctx.UI.LazyColumn({
+        fillMaxSize: true,
+        padding: 16,
+        spacing: 14,
+        onLoad: async () => {
+            if (!initialized.value) {
+                initialized.set(true);
+                sync((0, shared_1.loadSettings)());
+            }
+        },
+    }, children);
+}
