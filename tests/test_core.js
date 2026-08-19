@@ -75,6 +75,23 @@ global.ToolPkg = {
   const loadedTree = registrations.ui[0].screen(ctx);
   text = JSON.stringify(loadedTree);
   for (const cardName of ['甲', '乙']) assert(text.includes(cardName), cardName);
+  assert.equal((text.match(/保存设置/g) || []).length, 3);
+  const saveButtons = [];
+  const visit = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'Button' && node.props?.text === '保存设置') saveButtons.push(node);
+    if (Array.isArray(node.children)) node.children.forEach(visit);
+  };
+  visit(loadedTree);
+  assert.equal(saveButtons.length, 3);
+  for (const button of saveButtons) await button.props.onClick();
+  const savedAfterButtons = shared.loadSettings();
+  assert.equal(savedAfterButtons.customDeviceName, '启明的手机');
+  assert.equal(savedAfterButtons.manualAddress, '武汉');
+  assert.equal(savedAfterButtons.injectionTimeoutSeconds, 10);
+  assert(!text.includes('保存文本设置'));
+  assert(!text.includes('保存超时和地址'));
+  assert(!text.includes('修改后点击'));
   assert.equal(states.get('characterCardsLoading'), false);
   console.log('ENV_INJECTOR_V110_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2 });
 })().catch(error => { console.error(error); process.exitCode = 1; });

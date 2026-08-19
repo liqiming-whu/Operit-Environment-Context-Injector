@@ -156,18 +156,36 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     weatherProvider: weather.value,
   });
 
-  const applyTextSettings = (): boolean => {
+  const saveTimeout = (): boolean => {
     const seconds = Number(timeout.value.trim());
     if (!Number.isFinite(seconds) || seconds < 3 || seconds > 60) {
       status.set("注入超时必须是 3 至 60 秒之间的整数。");
       return false;
     }
-    if (locationMode.value === "manual" && !manualAddress.value.trim()) {
+    patch({ injectionTimeoutSeconds: Math.round(seconds) });
+    status.set("设置已保存。");
+    return true;
+  };
+
+  const saveDeviceName = (): void => {
+    patch({ customDeviceName: customDeviceName.value });
+    status.set("设置已保存。");
+  };
+
+  const saveManualAddress = (): boolean => {
+    if (!manualAddress.value.trim()) {
       status.set("手动地址不能为空。");
       return false;
     }
-    patch({ injectionTimeoutSeconds: Math.round(seconds), manualAddress: manualAddress.value, customDeviceName: customDeviceName.value });
+    patch({ manualAddress: manualAddress.value });
     status.set("设置已保存。");
+    return true;
+  };
+
+  const applyPendingTextSettings = (): boolean => {
+    if (!saveTimeout()) return false;
+    if (locationMode.value === "manual" && !saveManualAddress()) return false;
+    saveDeviceName();
     return true;
   };
 
@@ -179,7 +197,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
   };
 
   const runPreview = async (manualTest: boolean): Promise<void> => {
-    if (running.value || !applyTextSettings()) return;
+    if (running.value || !applyPendingTextSettings()) return;
     running.set(true);
     status.set(manualTest ? "正在手动测试环境采集…" : "正在生成预览…");
     const started = Date.now();
@@ -224,7 +242,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           singleLine: true,
         }),
         ctx.UI.Text({ text: "允许 3–60 秒，默认 10 秒。", style: "bodySmall", color: "onSurfaceVariant" }),
-        ctx.UI.Button({ text: "保存文本设置", fillMaxWidth: true, onClick: () => { applyTextSettings(); } }),
+        ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: () => { saveTimeout(); } }),
       ]),
     ]),
 
@@ -251,7 +269,8 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           onValueChange: customDeviceName.set,
           singleLine: true,
         }),
-        ctx.UI.Text({ text: "非空时优先使用自定义名称；留空时读取系统设备名称。修改后点击“保存文本设置”。", style: "bodySmall", color: "onSurfaceVariant" }),
+        ctx.UI.Text({ text: "非空时优先使用自定义名称；留空时读取系统设备名称。", style: "bodySmall", color: "onSurfaceVariant" }),
+        ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: saveDeviceName }),
       ]),
     ]),
 
@@ -305,7 +324,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           onValueChange: manualAddress.set,
           singleLine: true,
         }),
-        ctx.UI.Text({ text: "修改后点击“保存超时和地址”。", style: "bodySmall", color: "onSurfaceVariant" }),
+        ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: () => { saveManualAddress(); } }),
       ]),
     ]));
   } else {
