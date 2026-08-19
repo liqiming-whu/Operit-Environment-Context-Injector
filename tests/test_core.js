@@ -1,5 +1,6 @@
 const assert = require('assert');
 let stored = '';
+let failGeocoding = false;
 class MockDate { constructor(v) { this.v = v; } }
 class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'EEEE' ? '星期三' : '2026-08-19 12:00:00'; } }
 const prefs = { getString: () => stored, edit: () => ({ putString: (_k, v) => ({ apply: () => { stored = v; } }) }) };
@@ -26,7 +27,10 @@ global.Tools = {
   Chat: { listCharacterCards: async () => ({ cards: [{ id: 'card-b', name: '乙' }, { id: 'card-a', name: '甲' }] }) },
   System: { getLocation: async () => ({ latitude: 30.6, longitude: 114.1, accuracy: 30, provider: 'network', timestamp: Date.now() }) },
   Net: { http: async ({ url }) => {
-    if (url.includes('geocoding-api')) return { statusCode: 200, content: JSON.stringify({ results: [{ latitude: 30.6, longitude: 114.1, name: '武汉', admin1: '湖北', country: '中国' }] }) };
+    if (url.includes('geocoding-api')) {
+      if (failGeocoding) throw new Error('mock geocoding failure');
+      return { statusCode: 200, content: JSON.stringify({ results: [{ latitude: 30.6, longitude: 114.1, name: '武汉', admin1: '湖北', country: '中国' }] }) };
+    }
     if (url.includes('forecast')) return { statusCode: 200, content: JSON.stringify({ current: { temperature_2m: 33, relative_humidity_2m: 61, apparent_temperature: 40, weather_code: 3, wind_speed_10m: 8, wind_direction_10m: 45 } }) };
     if (url.includes('nominatim')) return { statusCode: 200, content: JSON.stringify({ address: { city: '武汉', state: '湖北', country: '中国' } }) };
     throw new Error(`unexpected URL ${url}`);
@@ -53,6 +57,21 @@ global.ToolPkg = {
   const preview = await shared.buildEnvironmentPreview(settings);
   assert(preview.includes('设备名称: 启明的手机'));
   assert(!preview.includes('设备名称: V2505A'));
+  const headings = ['【当前时间】', '【当前天气】', '【当前位置】', '【当前电量】', '【设备信息】'];
+  const positions = headings.map(heading => preview.indexOf(heading));
+  assert(positions.every(position => position >= 0));
+  assert(positions.every((position, index) => index === 0 || position > positions[index - 1]));
+  const locationSection = preview.slice(positions[2], positions[3]);
+  assert(!locationSection.includes('坐标:'));
+  assert(!locationSection.includes('时间:'));
+  failGeocoding = true;
+  const failedPreview = await shared.buildEnvironmentPreview(settings);
+  failGeocoding = false;
+  const failedPositions = headings.map(heading => failedPreview.indexOf(heading));
+  assert(failedPositions.every(position => position >= 0));
+  assert(failedPositions.every((position, index) => index === 0 || position > failedPositions[index - 1]));
+  assert(failedPreview.slice(failedPositions[1], failedPositions[2]).includes('错误:'));
+  assert(failedPreview.slice(failedPositions[2], failedPositions[3]).includes('错误:'));
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'card-a', name: '甲' }), true);
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'other', name: '其他' }), false);
   assert.equal(await shared.appendEnvironmentToMessage('测试', { type: 'character_card', id: 'other', name: '其他' }), null);

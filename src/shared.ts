@@ -344,11 +344,9 @@ function locationBlock(location: LocationSnapshot): string {
   return [
     "【当前位置】",
     `地址: ${location.label || "-"}`,
-    `坐标: ${formatCoordinates(location.latitude, location.longitude)}`,
     `精度: ${location.accuracy && location.accuracy > 0 ? `${Math.round(location.accuracy)} m` : "-"}`,
     `定位源: ${location.provider || "-"}`,
     `地址源: ${location.addressProvider || "-"}`,
-    `时间: ${location.timestamp ? formatTimestamp(location.timestamp) : "-"}`,
     ...(location.addressWarnings.length ? [`地址容错: ${location.addressWarnings.join("; ")}`] : []),
   ].join("\n");
 }
@@ -432,29 +430,40 @@ function weatherBlock(weather: any, location: LocationSnapshot): string {
 export async function buildEnvironmentContent(settingsInput?: EnvironmentInjectionSettings): Promise<string> {
   const settings = sanitizeSettings(settingsInput || loadSettings());
   const deadlineMs = Date.now() + settings.injectionTimeoutSeconds * 1000;
-  const blocks: string[] = [];
-  if (settings.injectTime) blocks.push(buildTimeBlock());
+  const timeContent = settings.injectTime ? buildTimeBlock() : "";
+  let weatherContent = "";
+  let locationContent = "";
+  let batteryContent = "";
+  let deviceContent = "";
+
   if (settings.injectBattery) {
-    try { blocks.push(readBatteryBlock()); } catch (error) { blocks.push(errorBlock("【当前电量】", error)); }
+    try { batteryContent = readBatteryBlock(); }
+    catch (error) { batteryContent = errorBlock("【当前电量】", error); }
   }
   if (settings.injectDevice) {
-    try { blocks.push(readDeviceBlock(settings.customDeviceName)); } catch (error) { blocks.push(errorBlock("【设备信息】", error)); }
+    try { deviceContent = readDeviceBlock(settings.customDeviceName); }
+    catch (error) { deviceContent = errorBlock("【设备信息】", error); }
   }
 
   let location: LocationSnapshot | null = null;
   if (settings.injectLocation || settings.injectWeather) {
     try { location = await resolveLocation(settings, deadlineMs); }
     catch (error) {
-      if (settings.injectLocation) blocks.push(errorBlock("【当前位置】", error));
-      if (settings.injectWeather) blocks.push(errorBlock("【当前天气】", error));
+      if (settings.injectWeather) weatherContent = errorBlock("【当前天气】", error);
+      if (settings.injectLocation) locationContent = errorBlock("【当前位置】", error);
     }
   }
-  if (settings.injectLocation && location) blocks.push(locationBlock(location));
-  if (settings.injectWeather && location) {
-    try { blocks.push(weatherBlock(await fetchWeather(settings.weatherProvider, location, deadlineMs), location)); }
-    catch (error) { blocks.push(errorBlock("【当前天气】", error)); }
+  if (location) {
+    if (settings.injectWeather) {
+      try { weatherContent = weatherBlock(await fetchWeather(settings.weatherProvider, location, deadlineMs), location); }
+      catch (error) { weatherContent = errorBlock("【当前天气】", error); }
+    }
+    if (settings.injectLocation) locationContent = locationBlock(location);
   }
-  return blocks.join("\n\n");
+
+  return [timeContent, weatherContent, locationContent, batteryContent, deviceContent]
+    .filter(content => content.trim())
+    .join("\n\n");
 }
 
 export async function buildEnvironmentPreview(settingsInput?: EnvironmentInjectionSettings): Promise<string> {
