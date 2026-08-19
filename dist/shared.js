@@ -14,12 +14,16 @@ exports.matchesBoundCharacterCard = matchesBoundCharacterCard;
 exports.appendEnvironmentToMessage = appendEnvironmentToMessage;
 const SETTINGS_PREFS_NAME = "toolpkg_environment_context_injector";
 const SETTINGS_KEY = "environment_context_injector_settings";
+const LOCATION_CACHE_KEY = "environment_context_location_cache";
+const WEATHER_CACHE_KEY = "environment_context_weather_cache";
 const ATTACHMENT_ID_PREFIX = "environment_context_bundle_";
 const ATTACHMENT_FILE_PREFIX = "Environment:";
 exports.DEFAULT_SETTINGS = {
     masterEnabled: false,
     persistInjectedContent: true,
     injectionTimeoutSeconds: 10,
+    weatherRefreshIntervalMinutes: 30,
+    locationRefreshIntervalMinutes: 10,
     injectTime: true,
     injectWeather: true,
     injectLocation: true,
@@ -65,6 +69,8 @@ function sanitizeSettings(input) {
         masterEnabled: Boolean(input?.masterEnabled ?? exports.DEFAULT_SETTINGS.masterEnabled),
         persistInjectedContent: Boolean(input?.persistInjectedContent ?? exports.DEFAULT_SETTINGS.persistInjectedContent),
         injectionTimeoutSeconds: clampInteger(input?.injectionTimeoutSeconds, 3, 60, 10),
+        weatherRefreshIntervalMinutes: clampInteger(input?.weatherRefreshIntervalMinutes, 5, 180, 30),
+        locationRefreshIntervalMinutes: clampInteger(input?.locationRefreshIntervalMinutes, 5, 60, 10),
         injectTime: Boolean(input?.injectTime ?? exports.DEFAULT_SETTINGS.injectTime),
         injectWeather: Boolean(input?.injectWeather ?? exports.DEFAULT_SETTINGS.injectWeather),
         injectLocation: Boolean(input?.injectLocation ?? exports.DEFAULT_SETTINGS.injectLocation),
@@ -103,6 +109,54 @@ function getInjectionEnabled() {
 }
 function setInjectionEnabled(enabled) {
     return saveSettings({ masterEnabled: enabled });
+}
+function readCache(preferenceKey, expectedKey, maxAgeMinutes) {
+    try {
+        const raw = String(getPrefs().getString(preferenceKey, "") || "").trim();
+        if (!raw)
+            return null;
+        const parsed = JSON.parse(raw);
+        const record = parsed?.entries?.[expectedKey];
+        if (!record)
+            return null;
+        const cachedAt = Number(record.cachedAt);
+        const ageMs = Date.now() - cachedAt;
+        if (!Number.isFinite(cachedAt) || ageMs < 0 || ageMs >= maxAgeMinutes * 60000)
+            return null;
+        return record.value ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+function writeCache(preferenceKey, key, value) {
+    try {
+        let entries = {};
+        const raw = String(getPrefs().getString(preferenceKey, "") || "").trim();
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                if (parsed?.entries && typeof parsed.entries === "object")
+                    entries = parsed.entries;
+            }
+            catch { }
+        }
+        entries[key] = { cachedAt: Date.now(), value };
+        const newestEntries = Object.fromEntries(Object.entries(entries)
+            .sort((left, right) => Number(right[1]?.cachedAt || 0) - Number(left[1]?.cachedAt || 0))
+            .slice(0, 12));
+        const store = { version: 1, entries: newestEntries };
+        getPrefs().edit().putString(preferenceKey, JSON.stringify(store)).apply();
+    }
+    catch { }
+}
+function locationCacheKey(settings) {
+    return settings.locationMode === "manual"
+        ? `manual|${settings.manualAddress.trim().toLowerCase()}`
+        : `auto|${settings.usePreciseLocation ? "precise" : "balanced"}|${settings.reverseGeocodingProvider}`;
+}
+function weatherCacheKey(provider, location) {
+    return `${provider}|${location.latitude.toFixed(4)}|${location.longitude.toFixed(4)}`;
 }
 function escapeXml(value) {
     return value
@@ -279,9 +333,18 @@ async function reverseAddress(provider, latitude, longitude, deadlineMs) {
     }
     throw new Error(`所有反向地址解析服务失败: ${warnings.join("; ")}`);
 }
-async function resolveLocation(settings, deadlineMs) {
-    if (settings.locationMode === "manual")
-        return geocodeManual(settings.manualAddress, deadlineMs);
+async function resolveLocation(settings, deadlineMs, forceRefresh = false) {
+    const cacheKey = locationCacheKey(settings);
+    if (!forceRefresh) {
+        const cached = readCache(LOCATION_CACHE_KEY, cacheKey, settings.locationRefreshIntervalMinutes);
+        if (cached && Number.isFinite(Number(cached.latitude)) && Number.isFinite(Number(cached.longitude)))
+            return cached;
+    }
+    if (settings.locationMode === "manual") {
+        const location = await geocodeManual(settings.manualAddress, deadlineMs);
+        writeCache(LOCATION_CACHE_KEY, cacheKey, location);
+        return location;
+    }
     ensureDeadline(deadlineMs);
     const timeout = Math.max(1, Math.min(secondsRemaining(deadlineMs), settings.injectionTimeoutSeconds));
     const raw = await Tools.System.getLocation(settings.usePreciseLocation, timeout, false);
@@ -290,7 +353,7 @@ async function resolveLocation(settings, deadlineMs) {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude))
         throw new Error("定位坐标不可用");
     const address = await reverseAddress(settings.reverseGeocodingProvider, latitude, longitude, deadlineMs);
-    return {
+    const location = {
         latitude, longitude, label: address.label, city: address.city, region: address.region,
         country: address.country,
         accuracy: Number.isFinite(Number(raw?.accuracy)) ? Number(raw.accuracy) : null,
@@ -299,6 +362,8 @@ async function resolveLocation(settings, deadlineMs) {
         addressProvider: address.provider,
         addressWarnings: address.warnings,
     };
+    writeCache(LOCATION_CACHE_KEY, cacheKey, location);
+    return location;
 }
 function locationBlock(location) {
     return [
@@ -354,17 +419,29 @@ async function fetchWttr(location, deadlineMs) {
     const condition = /[\u3400-\u9fff]/.test(localized) ? localized : WTTR_ZH[Number(c.weatherCode)] || english || localized || "未知";
     return { condition, temperature: numberOrNull(c.temp_C), feelsLike: numberOrNull(c.FeelsLikeC), humidity: numberOrNull(c.humidity), windSpeed: numberOrNull(c.windspeedKmph), windDirection: clean(c.winddir16Point, 20), source: "wttr.in" };
 }
-async function fetchWeather(provider, location, deadlineMs) {
-    if (provider === "open-meteo")
-        return fetchOpenMeteo(location, deadlineMs);
-    try {
-        return provider === "met-norway" ? await fetchMetNorway(location, deadlineMs) : await fetchWttr(location, deadlineMs);
+async function fetchWeather(provider, location, deadlineMs, refreshIntervalMinutes, forceRefresh = false) {
+    const cacheKey = weatherCacheKey(provider, location);
+    if (!forceRefresh) {
+        const cached = readCache(WEATHER_CACHE_KEY, cacheKey, refreshIntervalMinutes);
+        if (cached && typeof cached === "object")
+            return cached;
     }
-    catch (error) {
-        ensureDeadline(deadlineMs);
-        const fallback = await fetchOpenMeteo(location, deadlineMs);
-        return { ...fallback, fallback: `${provider}: ${clean(error instanceof Error ? error.message : error, 160)}` };
+    let weather;
+    if (provider === "open-meteo") {
+        weather = await fetchOpenMeteo(location, deadlineMs);
     }
+    else {
+        try {
+            weather = provider === "met-norway" ? await fetchMetNorway(location, deadlineMs) : await fetchWttr(location, deadlineMs);
+        }
+        catch (error) {
+            ensureDeadline(deadlineMs);
+            const fallback = await fetchOpenMeteo(location, deadlineMs);
+            weather = { ...fallback, fallback: `${provider}: ${clean(error instanceof Error ? error.message : error, 160)}` };
+        }
+    }
+    writeCache(WEATHER_CACHE_KEY, cacheKey, weather);
+    return weather;
 }
 function weatherBlock(weather, location) {
     const temp = weather.temperature === null ? "-" : `${Number(weather.temperature).toFixed(Number.isInteger(weather.temperature) ? 0 : 1)}°C`;
@@ -382,7 +459,7 @@ function weatherBlock(weather, location) {
         ...(weather.fallback ? [`天气容错: ${weather.fallback}; 已使用 Open-Meteo`] : []),
     ].join("\n");
 }
-async function buildEnvironmentContent(settingsInput) {
+async function buildEnvironmentContent(settingsInput, forceRefresh = false) {
     const settings = sanitizeSettings(settingsInput || loadSettings());
     const deadlineMs = Date.now() + settings.injectionTimeoutSeconds * 1000;
     const timeContent = settings.injectTime ? buildTimeBlock() : "";
@@ -409,7 +486,7 @@ async function buildEnvironmentContent(settingsInput) {
     let location = null;
     if (settings.injectLocation || settings.injectWeather) {
         try {
-            location = await resolveLocation(settings, deadlineMs);
+            location = await resolveLocation(settings, deadlineMs, forceRefresh);
         }
         catch (error) {
             if (settings.injectWeather)
@@ -421,7 +498,7 @@ async function buildEnvironmentContent(settingsInput) {
     if (location) {
         if (settings.injectWeather) {
             try {
-                weatherContent = weatherBlock(await fetchWeather(settings.weatherProvider, location, deadlineMs), location);
+                weatherContent = weatherBlock(await fetchWeather(settings.weatherProvider, location, deadlineMs, settings.weatherRefreshIntervalMinutes, forceRefresh), location);
             }
             catch (error) {
                 weatherContent = errorBlock("【当前天气】", error);
@@ -434,8 +511,8 @@ async function buildEnvironmentContent(settingsInput) {
         .filter(content => content.trim())
         .join("\n\n");
 }
-async function buildEnvironmentPreview(settingsInput) {
-    return buildEnvironmentContent(settingsInput || loadSettings());
+async function buildEnvironmentPreview(settingsInput, forceRefresh = false) {
+    return buildEnvironmentContent(settingsInput || loadSettings(), forceRefresh);
 }
 function buildAttachment(content) {
     const now = Date.now();

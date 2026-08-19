@@ -1,9 +1,14 @@
 const assert = require('assert');
-let stored = '';
+const stored = new Map();
 let failGeocoding = false;
+let geocodingRequests = 0;
+let weatherRequests = 0;
 class MockDate { constructor(v) { this.v = v; } }
 class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'EEEE' ? '星期三' : '2026-08-19 12:00:00'; } }
-const prefs = { getString: () => stored, edit: () => ({ putString: (_k, v) => ({ apply: () => { stored = v; } }) }) };
+const prefs = {
+  getString: (key, fallback) => stored.has(key) ? stored.get(key) : fallback,
+  edit: () => ({ putString: (key, value) => ({ apply: () => { stored.set(key, value); } }) }),
+};
 const context = { getSharedPreferences: () => prefs, registerReceiver: () => ({ getIntExtra: k => k === 1 ? 80 : k === 2 ? 100 : 3 }), getContentResolver: () => ({}) };
 global.Java = {
   com: { ai: { assistance: { operit: { api: { chat: { EnhancedAIService: { getInstance: () => ({ setInputProcessingState: () => {} }), getChatInstance: () => ({ setInputProcessingState: () => {} }) } } } } } } },
@@ -28,10 +33,14 @@ global.Tools = {
   System: { getLocation: async () => ({ latitude: 30.6, longitude: 114.1, accuracy: 30, provider: 'network', timestamp: Date.now() }) },
   Net: { http: async ({ url }) => {
     if (url.includes('geocoding-api')) {
+      geocodingRequests += 1;
       if (failGeocoding) throw new Error('mock geocoding failure');
       return { statusCode: 200, content: JSON.stringify({ results: [{ latitude: 30.6, longitude: 114.1, name: '武汉', admin1: '湖北', country: '中国' }] }) };
     }
-    if (url.includes('forecast')) return { statusCode: 200, content: JSON.stringify({ current: { temperature_2m: 33, relative_humidity_2m: 61, apparent_temperature: 40, weather_code: 3, wind_speed_10m: 8, wind_direction_10m: 45 } }) };
+    if (url.includes('forecast')) {
+      weatherRequests += 1;
+      return { statusCode: 200, content: JSON.stringify({ current: { temperature_2m: 33, relative_humidity_2m: 61, apparent_temperature: 40, weather_code: 3, wind_speed_10m: 8, wind_direction_10m: 45 } }) };
+    }
     if (url.includes('nominatim')) return { statusCode: 200, content: JSON.stringify({ address: { city: '武汉', state: '湖北', country: '中国' } }) };
     throw new Error(`unexpected URL ${url}`);
   } },
@@ -54,6 +63,8 @@ global.ToolPkg = {
     boundCharacterCardIds: ['card-a', 'card-b', 'card-a'],
   });
   assert.deepEqual(settings.boundCharacterCardIds, ['card-a', 'card-b']);
+  assert.equal(settings.weatherRefreshIntervalMinutes, 30);
+  assert.equal(settings.locationRefreshIntervalMinutes, 10);
   const preview = await shared.buildEnvironmentPreview(settings);
   assert(preview.includes('设备名称: 启明的手机'));
   assert(!preview.includes('设备名称: V2505A'));
@@ -64,14 +75,26 @@ global.ToolPkg = {
   const locationSection = preview.slice(positions[2], positions[3]);
   assert(!locationSection.includes('坐标:'));
   assert(!locationSection.includes('时间:'));
+  assert.equal(geocodingRequests, 1);
+  assert.equal(weatherRequests, 1);
   failGeocoding = true;
-  const failedPreview = await shared.buildEnvironmentPreview(settings);
+  const cachedPreview = await shared.buildEnvironmentPreview(settings);
+  assert(cachedPreview.includes('天气: 阴'));
+  assert.equal(geocodingRequests, 1);
+  assert.equal(weatherRequests, 1);
+  const failedPreview = await shared.buildEnvironmentPreview(settings, true);
   failGeocoding = false;
+  assert.equal(geocodingRequests, 2);
+  assert.equal(weatherRequests, 1);
   const failedPositions = headings.map(heading => failedPreview.indexOf(heading));
   assert(failedPositions.every(position => position >= 0));
   assert(failedPositions.every((position, index) => index === 0 || position > failedPositions[index - 1]));
   assert(failedPreview.slice(failedPositions[1], failedPositions[2]).includes('错误:'));
   assert(failedPreview.slice(failedPositions[2], failedPositions[3]).includes('错误:'));
+  const refreshedPreview = await shared.buildEnvironmentPreview(settings, true);
+  assert(refreshedPreview.includes('天气: 阴'));
+  assert.equal(geocodingRequests, 3);
+  assert.equal(weatherRequests, 2);
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'card-a', name: '甲' }), true);
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'other', name: '其他' }), false);
   assert.equal(await shared.appendEnvironmentToMessage('测试', { type: 'character_card', id: 'other', name: '其他' }), null);
@@ -94,7 +117,10 @@ global.ToolPkg = {
   const loadedTree = registrations.ui[0].screen(ctx);
   text = JSON.stringify(loadedTree);
   for (const cardName of ['甲', '乙']) assert(text.includes(cardName), cardName);
-  assert.equal((text.match(/保存设置/g) || []).length, 3);
+  assert(text.includes('天气刷新间隔（分钟，5–180）'));
+  assert(text.includes('定位刷新间隔（分钟，5–60）'));
+  assert(text.indexOf('刷新间隔') < text.indexOf('预览与测试'));
+  assert.equal((text.match(/保存设置/g) || []).length, 4);
   const saveButtons = [];
   const visit = node => {
     if (!node || typeof node !== 'object') return;
@@ -102,15 +128,17 @@ global.ToolPkg = {
     if (Array.isArray(node.children)) node.children.forEach(visit);
   };
   visit(loadedTree);
-  assert.equal(saveButtons.length, 3);
+  assert.equal(saveButtons.length, 4);
   for (const button of saveButtons) await button.props.onClick();
   const savedAfterButtons = shared.loadSettings();
   assert.equal(savedAfterButtons.customDeviceName, '启明的手机');
   assert.equal(savedAfterButtons.manualAddress, '武汉');
   assert.equal(savedAfterButtons.injectionTimeoutSeconds, 10);
+  assert.equal(savedAfterButtons.weatherRefreshIntervalMinutes, 30);
+  assert.equal(savedAfterButtons.locationRefreshIntervalMinutes, 10);
   assert(!text.includes('保存文本设置'));
   assert(!text.includes('保存超时和地址'));
   assert(!text.includes('修改后点击'));
   assert.equal(states.get('characterCardsLoading'), false);
-  console.log('ENV_INJECTOR_V110_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2 });
+  console.log('ENV_INJECTOR_V120_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, weatherRequests });
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -55,6 +55,8 @@ function Screen(ctx) {
     const master = state(ctx, "master", initial.masterEnabled);
     const persist = state(ctx, "persist", initial.persistInjectedContent);
     const timeout = state(ctx, "timeout", String(initial.injectionTimeoutSeconds));
+    const weatherRefreshInterval = state(ctx, "weatherRefreshInterval", String(initial.weatherRefreshIntervalMinutes));
+    const locationRefreshInterval = state(ctx, "locationRefreshInterval", String(initial.locationRefreshIntervalMinutes));
     const injectTime = state(ctx, "injectTime", initial.injectTime);
     const injectWeather = state(ctx, "injectWeather", initial.injectWeather);
     const injectLocation = state(ctx, "injectLocation", initial.injectLocation);
@@ -77,6 +79,8 @@ function Screen(ctx) {
         master.set(next.masterEnabled);
         persist.set(next.persistInjectedContent);
         timeout.set(String(next.injectionTimeoutSeconds));
+        weatherRefreshInterval.set(String(next.weatherRefreshIntervalMinutes));
+        locationRefreshInterval.set(String(next.locationRefreshIntervalMinutes));
         injectTime.set(next.injectTime);
         injectWeather.set(next.injectWeather);
         injectLocation.set(next.injectLocation);
@@ -103,6 +107,8 @@ function Screen(ctx) {
         masterEnabled: master.value,
         persistInjectedContent: persist.value,
         injectionTimeoutSeconds: Number(timeout.value),
+        weatherRefreshIntervalMinutes: Number(weatherRefreshInterval.value),
+        locationRefreshIntervalMinutes: Number(locationRefreshInterval.value),
         injectTime: injectTime.value,
         injectWeather: injectWeather.value,
         injectLocation: injectLocation.value,
@@ -123,6 +129,24 @@ function Screen(ctx) {
             return false;
         }
         patch({ injectionTimeoutSeconds: Math.round(seconds) });
+        status.set("设置已保存。");
+        return true;
+    };
+    const saveRefreshIntervals = () => {
+        const weatherMinutes = Number(weatherRefreshInterval.value.trim());
+        const locationMinutes = Number(locationRefreshInterval.value.trim());
+        if (!Number.isFinite(weatherMinutes) || weatherMinutes < 5 || weatherMinutes > 180) {
+            status.set("天气刷新间隔必须是 5 至 180 分钟之间的整数。");
+            return false;
+        }
+        if (!Number.isFinite(locationMinutes) || locationMinutes < 5 || locationMinutes > 60) {
+            status.set("定位刷新间隔必须是 5 至 60 分钟之间的整数。");
+            return false;
+        }
+        patch({
+            weatherRefreshIntervalMinutes: Math.round(weatherMinutes),
+            locationRefreshIntervalMinutes: Math.round(locationMinutes),
+        });
         status.set("设置已保存。");
         return true;
     };
@@ -160,7 +184,7 @@ function Screen(ctx) {
         status.set(manualTest ? "正在手动测试环境采集…" : "正在生成预览…");
         const started = Date.now();
         try {
-            const content = await (0, shared_1.buildEnvironmentPreview)(current());
+            const content = await (0, shared_1.buildEnvironmentPreview)(current(), manualTest);
             preview.set(content || "没有启用任何注入项目。");
             const elapsed = ((Date.now() - started) / 1000).toFixed(1);
             const partial = content.includes("错误:");
@@ -209,7 +233,7 @@ function Screen(ctx) {
             divider(ctx),
             toggle(ctx, "天气", "当前天气、温度、湿度和风速", injectWeather.value, value => patch({ injectWeather: value })),
             divider(ctx),
-            toggle(ctx, "地点", "地址、坐标、精度和数据来源", injectLocation.value, value => patch({ injectLocation: value })),
+            toggle(ctx, "地点", "地址、精度和数据来源", injectLocation.value, value => patch({ injectLocation: value })),
             divider(ctx),
             toggle(ctx, "电量", "电池百分比与充电状态", injectBattery.value, value => patch({ injectBattery: value })),
             divider(ctx),
@@ -301,6 +325,26 @@ function Screen(ctx) {
         radio(ctx, "MET Norway", "失败时自动回退 Open-Meteo", "met-norway", weather.value, value => patch({ weatherProvider: value })),
         divider(ctx),
         radio(ctx, "wttr.in", "失败或超时时自动回退 Open-Meteo", "wttr.in", weather.value, value => patch({ weatherProvider: value })),
+    ]));
+    children.push(title(ctx, "schedule", "刷新间隔"));
+    children.push(card(ctx, [
+        ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+            ctx.UI.TextField({
+                label: "天气刷新间隔（分钟，5–180）",
+                value: weatherRefreshInterval.value,
+                onValueChange: weatherRefreshInterval.set,
+                singleLine: true,
+            }),
+            ctx.UI.Text({ text: "默认 30 分钟；普通预览和聊天注入在有效期内复用天气缓存。", style: "bodySmall", color: "onSurfaceVariant" }),
+            ctx.UI.TextField({
+                label: "定位刷新间隔（分钟，5–60）",
+                value: locationRefreshInterval.value,
+                onValueChange: locationRefreshInterval.set,
+                singleLine: true,
+            }),
+            ctx.UI.Text({ text: "默认 10 分钟；缓存包含定位或手动地址解析结果。手动测试会强制刷新。", style: "bodySmall", color: "onSurfaceVariant" }),
+            ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: () => { saveRefreshIntervals(); } }),
+        ]),
     ]));
     children.push(title(ctx, "visibility", "预览与测试"));
     children.push(ctx.UI.Row({ fillMaxWidth: true, horizontalArrangement: "spaceBetween" }, [
