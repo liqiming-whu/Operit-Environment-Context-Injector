@@ -1,8 +1,11 @@
 const assert = require('assert');
 const stored = new Map();
 let failGeocoding = false;
+let failOpenMeteo = false;
+let failMetNorway = false;
 let geocodingRequests = 0;
 let weatherRequests = 0;
+const weatherProviderRequests = [];
 class MockDate { constructor(v) { this.v = v; } }
 class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'EEEE' ? '星期三' : '2026-08-19 12:00:00'; } }
 const prefs = {
@@ -37,9 +40,22 @@ global.Tools = {
       if (failGeocoding) throw new Error('mock geocoding failure');
       return { statusCode: 200, content: JSON.stringify({ results: [{ latitude: 30.6, longitude: 114.1, name: '武汉', admin1: '湖北', country: '中国' }] }) };
     }
-    if (url.includes('forecast')) {
+    if (url.includes('api.open-meteo.com/v1/forecast')) {
       weatherRequests += 1;
+      weatherProviderRequests.push('open-meteo');
+      if (failOpenMeteo) return { statusCode: 503, content: '{}' };
       return { statusCode: 200, content: JSON.stringify({ current: { temperature_2m: 33, relative_humidity_2m: 61, apparent_temperature: 40, weather_code: 3, wind_speed_10m: 8, wind_direction_10m: 45 } }) };
+    }
+    if (url.includes('api.met.no/weatherapi')) {
+      weatherRequests += 1;
+      weatherProviderRequests.push('met-norway');
+      if (failMetNorway) return { statusCode: 502, content: '{}' };
+      return { statusCode: 200, content: JSON.stringify({ properties: { timeseries: [{ data: { instant: { details: { air_temperature: 31, relative_humidity: 58, wind_speed: 2, wind_from_direction: 90 } }, next_1_hours: { summary: { symbol_code: 'partlycloudy_day' } } } }] } }) };
+    }
+    if (url.includes('wttr.in')) {
+      weatherRequests += 1;
+      weatherProviderRequests.push('wttr.in');
+      return { statusCode: 200, content: JSON.stringify({ current_condition: [{ temp_C: '29', FeelsLikeC: '31', humidity: '65', windspeedKmph: '9', winddir16Point: 'E', weatherCode: '116', weatherDesc: [{ value: 'Partly cloudy' }] }] }) };
     }
     if (url.includes('nominatim')) return { statusCode: 200, content: JSON.stringify({ address: { city: '武汉', state: '湖北', country: '中国' } }) };
     throw new Error(`unexpected URL ${url}`);
@@ -95,6 +111,30 @@ global.ToolPkg = {
   assert(refreshedPreview.includes('天气: 阴'));
   assert.equal(geocodingRequests, 3);
   assert.equal(weatherRequests, 2);
+  failOpenMeteo = true;
+  const autoPreview = await shared.buildEnvironmentPreview({ ...settings, weatherProvider: 'auto' }, true);
+  failOpenMeteo = false;
+  assert(autoPreview.includes('来源: MET Norway'));
+  assert(autoPreview.includes('天气容错: open-meteo: HTTP 503; 已使用 MET Norway'));
+  assert.deepEqual(weatherProviderRequests.slice(-2), ['open-meteo', 'met-norway']);
+  assert.equal(geocodingRequests, 4);
+  assert.equal(weatherRequests, 4);
+  const cachedAutoPreview = await shared.buildEnvironmentPreview({ ...settings, weatherProvider: 'auto' });
+  assert(cachedAutoPreview.includes('来源: MET Norway'));
+  assert.equal(geocodingRequests, 4);
+  assert.equal(weatherRequests, 4);
+  failOpenMeteo = true;
+  failMetNorway = true;
+  const finalFallbackPreview = await shared.buildEnvironmentPreview({ ...settings, weatherProvider: 'auto' }, true);
+  failOpenMeteo = false;
+  failMetNorway = false;
+  assert(finalFallbackPreview.includes('来源: wttr.in'));
+  assert(finalFallbackPreview.includes('open-meteo: HTTP 503'));
+  assert(finalFallbackPreview.includes('met-norway: HTTP 502'));
+  assert(finalFallbackPreview.includes('已使用 wttr.in'));
+  assert.deepEqual(weatherProviderRequests.slice(-3), ['open-meteo', 'met-norway', 'wttr.in']);
+  assert.equal(geocodingRequests, 5);
+  assert.equal(weatherRequests, 7);
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'card-a', name: '甲' }), true);
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'other', name: '其他' }), false);
   assert.equal(await shared.appendEnvironmentToMessage('测试', { type: 'character_card', id: 'other', name: '其他' }), null);
@@ -112,7 +152,7 @@ global.ToolPkg = {
   const ctx = { UI, useState: (key, initial) => { if (!states.has(key)) states.set(key, initial); return [states.get(key), value => states.set(key, value)]; } };
   const tree = registrations.ui[0].screen(ctx);
   let text = JSON.stringify(tree);
-  for (const label of ['自定义设备名称', '绑定角色卡', '清除角色卡限制']) assert(text.includes(label), label);
+  for (const label of ['自定义设备名称', '绑定角色卡', '清除角色卡限制', '按 Open-Meteo → MET Norway → wttr.in 顺序容错']) assert(text.includes(label), label);
   await tree.props.onLoad();
   const loadedTree = registrations.ui[0].screen(ctx);
   text = JSON.stringify(loadedTree);
@@ -140,5 +180,5 @@ global.ToolPkg = {
   assert(!text.includes('保存超时和地址'));
   assert(!text.includes('修改后点击'));
   assert.equal(states.get('characterCardsLoading'), false);
-  console.log('ENV_INJECTOR_V120_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, weatherRequests });
+  console.log('ENV_INJECTOR_V130_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, weatherRequests });
 })().catch(error => { console.error(error); process.exitCode = 1; });

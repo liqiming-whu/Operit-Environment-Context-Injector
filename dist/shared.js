@@ -85,7 +85,7 @@ function sanitizeSettings(input) {
         reverseGeocodingProvider: (["auto", "nominatim", "bigdatacloud", "photon"].includes(reverse)
             ? reverse
             : exports.DEFAULT_SETTINGS.reverseGeocodingProvider),
-        weatherProvider: (["open-meteo", "met-norway", "wttr.in"].includes(weather)
+        weatherProvider: (["auto", "open-meteo", "met-norway", "wttr.in"].includes(weather)
             ? weather
             : exports.DEFAULT_SETTINGS.weatherProvider),
     };
@@ -426,18 +426,44 @@ async function fetchWeather(provider, location, deadlineMs, refreshIntervalMinut
         if (cached && typeof cached === "object")
             return cached;
     }
+    const loaders = {
+        "open-meteo": () => fetchOpenMeteo(location, deadlineMs),
+        "met-norway": () => fetchMetNorway(location, deadlineMs),
+        "wttr.in": () => fetchWttr(location, deadlineMs),
+    };
     let weather;
-    if (provider === "open-meteo") {
-        weather = await fetchOpenMeteo(location, deadlineMs);
+    if (provider === "auto") {
+        const warnings = [];
+        for (const name of ["open-meteo", "met-norway", "wttr.in"]) {
+            try {
+                const result = await loaders[name]();
+                weather = warnings.length
+                    ? { ...result, fallback: `${warnings.join("; ")}; 已使用 ${result.source}` }
+                    : result;
+                break;
+            }
+            catch (error) {
+                warnings.push(`${name}: ${clean(error instanceof Error ? error.message : error, 160)}`);
+                ensureDeadline(deadlineMs);
+            }
+        }
+        if (!weather)
+            throw new Error(`所有天气服务失败: ${warnings.join("; ")}`);
+    }
+    else if (provider === "open-meteo") {
+        weather = await loaders[provider]();
     }
     else {
         try {
-            weather = provider === "met-norway" ? await fetchMetNorway(location, deadlineMs) : await fetchWttr(location, deadlineMs);
+            weather = await loaders[provider]();
         }
         catch (error) {
             ensureDeadline(deadlineMs);
-            const fallback = await fetchOpenMeteo(location, deadlineMs);
-            weather = { ...fallback, fallback: `${provider}: ${clean(error instanceof Error ? error.message : error, 160)}` };
+            const fallback = await loaders["open-meteo"]();
+            weather = {
+                ...fallback,
+                fallback: `${provider}: ${clean(error instanceof Error ? error.message : error, 160)}; 已使用 Open-Meteo`,
+            };
         }
     }
     writeCache(WEATHER_CACHE_KEY, cacheKey, weather);
@@ -456,7 +482,7 @@ function weatherBlock(weather, location) {
         `湿度: ${humidity}`,
         `风速: ${wind}`,
         `来源: ${weather.source}`,
-        ...(weather.fallback ? [`天气容错: ${weather.fallback}; 已使用 Open-Meteo`] : []),
+        ...(weather.fallback ? [`天气容错: ${weather.fallback}`] : []),
     ].join("\n");
 }
 async function buildEnvironmentContent(settingsInput, forceRefresh = false) {

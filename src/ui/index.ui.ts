@@ -370,6 +370,8 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
 
   children.push(title(ctx, "cloud", "天气供应商"));
   children.push(card(ctx, [
+    radio(ctx, "Auto", "按 Open-Meteo → MET Norway → wttr.in 顺序容错", "auto", weather.value, value => patch({ weatherProvider: value })),
+    divider(ctx),
     radio(ctx, "Open-Meteo", "默认天气源", "open-meteo", weather.value, value => patch({ weatherProvider: value })),
     divider(ctx),
     radio(ctx, "MET Norway", "失败时自动回退 Open-Meteo", "met-norway", weather.value, value => patch({ weatherProvider: value })),
