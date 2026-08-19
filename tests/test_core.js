@@ -4,7 +4,10 @@ let failGeocoding = false;
 let failOpenMeteo = false;
 let failMetNorway = false;
 let geocodingRequests = 0;
+let reverseGeocodingRequests = 0;
+let locationRequests = 0;
 let weatherRequests = 0;
+let currentLocation = { latitude: 30.6, longitude: 114.1, accuracy: 30, provider: 'network' };
 const weatherProviderRequests = [];
 class MockDate { constructor(v) { this.v = v; } }
 class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'EEEE' ? '星期三' : '2026-08-19 12:00:00'; } }
@@ -33,7 +36,7 @@ global.getChatId = () => '';
 global.getCallerCardId = () => '';
 global.Tools = {
   Chat: { listCharacterCards: async () => ({ cards: [{ id: 'card-b', name: '乙' }, { id: 'card-a', name: '甲' }] }) },
-  System: { getLocation: async () => ({ latitude: 30.6, longitude: 114.1, accuracy: 30, provider: 'network', timestamp: Date.now() }) },
+  System: { getLocation: async () => { locationRequests += 1; return { ...currentLocation, timestamp: Date.now() }; } },
   Net: { http: async ({ url }) => {
     if (url.includes('geocoding-api')) {
       geocodingRequests += 1;
@@ -57,7 +60,11 @@ global.Tools = {
       weatherProviderRequests.push('wttr.in');
       return { statusCode: 200, content: JSON.stringify({ current_condition: [{ temp_C: '29', FeelsLikeC: '31', humidity: '65', windspeedKmph: '9', winddir16Point: 'E', weatherCode: '116', weatherDesc: [{ value: 'Partly cloudy' }] }] }) };
     }
-    if (url.includes('nominatim')) return { statusCode: 200, content: JSON.stringify({ address: { city: '武汉', state: '湖北', country: '中国' } }) };
+    if (url.includes('nominatim')) {
+      reverseGeocodingRequests += 1;
+      const moved = url.includes('lat=31.200000');
+      return { statusCode: 200, content: JSON.stringify({ address: { city: moved ? '移动后地点' : '武汉', state: '湖北', country: '中国' } }) };
+    }
     throw new Error(`unexpected URL ${url}`);
   } },
 };
@@ -135,6 +142,37 @@ global.ToolPkg = {
   assert.deepEqual(weatherProviderRequests.slice(-3), ['open-meteo', 'met-norway', 'wttr.in']);
   assert.equal(geocodingRequests, 5);
   assert.equal(weatherRequests, 7);
+
+  const automaticSettings = {
+    ...settings,
+    locationMode: 'auto',
+    reverseGeocodingProvider: 'nominatim',
+    weatherProvider: 'wttr.in',
+    injectWeather: true,
+  };
+  const firstAutomaticPreview = await shared.buildEnvironmentPreview(automaticSettings);
+  assert(firstAutomaticPreview.includes('地址: 武汉 / 湖北 / 中国'));
+  assert(firstAutomaticPreview.includes('来源: wttr.in'));
+  assert.equal(locationRequests, 1);
+  assert.equal(reverseGeocodingRequests, 1);
+  assert.equal(weatherRequests, 8);
+  const cachedAutomaticPreview = await shared.buildEnvironmentPreview(automaticSettings);
+  assert(cachedAutomaticPreview.includes('地址: 武汉 / 湖北 / 中国'));
+  assert.equal(locationRequests, 2);
+  assert.equal(reverseGeocodingRequests, 1);
+  assert.equal(weatherRequests, 8);
+  currentLocation = { latitude: 31.2, longitude: 121.5, accuracy: 20, provider: 'gps' };
+  const movedAutomaticPreview = await shared.buildEnvironmentPreview(automaticSettings);
+  assert(movedAutomaticPreview.includes('地址: 移动后地点 / 湖北 / 中国'));
+  assert(!movedAutomaticPreview.includes('武汉 / 湖北 / 中国'));
+  assert(movedAutomaticPreview.includes('来源: wttr.in'));
+  assert.equal(locationRequests, 3);
+  assert.equal(reverseGeocodingRequests, 2);
+  assert.equal(weatherRequests, 9);
+
+  const compiledSharedSource = require('fs').readFileSync(require.resolve('../dist/shared.js'), 'utf8');
+  assert(!compiledSharedSource.includes('formatCoordinates'));
+  assert(!compiledSharedSource.includes('location.label || formatCoordinates'));
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'card-a', name: '甲' }), true);
   assert.equal(shared.matchesBoundCharacterCard(settings, { type: 'character_card', id: 'other', name: '其他' }), false);
   assert.equal(await shared.appendEnvironmentToMessage('测试', { type: 'character_card', id: 'other', name: '其他' }), null);
@@ -180,5 +218,5 @@ global.ToolPkg = {
   assert(!text.includes('保存超时和地址'));
   assert(!text.includes('修改后点击'));
   assert.equal(states.get('characterCardsLoading'), false);
-  console.log('ENV_INJECTOR_V130_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, weatherRequests });
+  console.log('ENV_INJECTOR_V131_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
 })().catch(error => { console.error(error); process.exitCode = 1; });

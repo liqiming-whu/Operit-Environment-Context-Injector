@@ -396,7 +396,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
         onValueChange: locationRefreshInterval.set,
         singleLine: true,
       }),
-      ctx.UI.Text({ text: "默认 10 分钟；缓存包含定位或手动地址解析结果。手动测试会强制刷新。", style: "bodySmall", color: "onSurfaceVariant" }),
+      ctx.UI.Text({ text: "默认 10 分钟；自动模式按当前坐标复用地址解析，移动后自动切换；手动测试会强制刷新。", style: "bodySmall", color: "onSurfaceVariant" }),
       ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: () => { saveRefreshIntervals(); } }),
     ]),
   ]));

@@ -182,10 +182,16 @@ function writeCache<T>(preferenceKey: string, key: string, value: T): void {
   } catch {}
 }
 
-function locationCacheKey(settings: EnvironmentInjectionSettings): string {
-  return settings.locationMode === "manual"
-    ? `manual|${settings.manualAddress.trim().toLowerCase()}`
-    : `auto|${settings.usePreciseLocation ? "precise" : "balanced"}|${settings.reverseGeocodingProvider}`;
+function manualLocationCacheKey(settings: EnvironmentInjectionSettings): string {
+  return `manual|${settings.manualAddress.trim().toLowerCase()}`;
+}
+
+function automaticLocationCacheKey(
+  settings: EnvironmentInjectionSettings,
+  latitude: number,
+  longitude: number
+): string {
+  return `auto|${settings.usePreciseLocation ? "precise" : "balanced"}|${settings.reverseGeocodingProvider}|${latitude.toFixed(4)}|${longitude.toFixed(4)}`;
 }
 
 function weatherCacheKey(provider: WeatherProvider, location: LocationSnapshot): string {
@@ -303,10 +309,6 @@ async function httpJson(url: string, deadlineMs: number, timeoutCapSeconds = 5, 
   }
 }
 
-function formatCoordinates(latitude: number, longitude: number): string {
-  return `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-}
-
 function addressResult(provider: string, city: unknown, region: unknown, country: unknown, fallback = "") {
   const normalizedCity = clean(city, 80);
   const normalizedRegion = clean(region, 80);
@@ -379,29 +381,44 @@ async function reverseAddress(provider: ReverseGeocodingProvider, latitude: numb
 }
 
 async function resolveLocation(settings: EnvironmentInjectionSettings, deadlineMs: number, forceRefresh = false): Promise<LocationSnapshot> {
-  const cacheKey = locationCacheKey(settings);
-  if (!forceRefresh) {
-    const cached = readCache<LocationSnapshot>(LOCATION_CACHE_KEY, cacheKey, settings.locationRefreshIntervalMinutes);
-    if (cached && Number.isFinite(Number(cached.latitude)) && Number.isFinite(Number(cached.longitude))) return cached;
-  }
   if (settings.locationMode === "manual") {
+    const cacheKey = manualLocationCacheKey(settings);
+    if (!forceRefresh) {
+      const cached = readCache<LocationSnapshot>(LOCATION_CACHE_KEY, cacheKey, settings.locationRefreshIntervalMinutes);
+      if (cached && Number.isFinite(Number(cached.latitude)) && Number.isFinite(Number(cached.longitude))) return cached;
+    }
     const location = await geocodeManual(settings.manualAddress, deadlineMs);
     writeCache(LOCATION_CACHE_KEY, cacheKey, location);
     return location;
   }
+
   ensureDeadline(deadlineMs);
   const timeout = Math.max(1, Math.min(secondsRemaining(deadlineMs), settings.injectionTimeoutSeconds));
   const raw = await Tools.System.getLocation(settings.usePreciseLocation, timeout, false);
   const latitude = Number(raw?.latitude);
   const longitude = Number(raw?.longitude);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw new Error("定位坐标不可用");
-  const address = await reverseAddress(settings.reverseGeocodingProvider, latitude, longitude, deadlineMs);
-  const location: LocationSnapshot = {
-    latitude, longitude, label: address.label, city: address.city, region: address.region,
-    country: address.country,
+
+  const cacheKey = automaticLocationCacheKey(settings, latitude, longitude);
+  const rawSnapshot = {
+    latitude,
+    longitude,
     accuracy: Number.isFinite(Number(raw?.accuracy)) ? Number(raw.accuracy) : null,
     provider: clean(raw?.provider, 40) || "device",
     timestamp: Number.isFinite(Number(raw?.timestamp)) ? Number(raw.timestamp) : Date.now(),
+  };
+  if (!forceRefresh) {
+    const cached = readCache<LocationSnapshot>(LOCATION_CACHE_KEY, cacheKey, settings.locationRefreshIntervalMinutes);
+    if (cached) return { ...cached, ...rawSnapshot };
+  }
+
+  const address = await reverseAddress(settings.reverseGeocodingProvider, latitude, longitude, deadlineMs);
+  const location: LocationSnapshot = {
+    ...rawSnapshot,
+    label: address.label,
+    city: address.city,
+    region: address.region,
+    country: address.country,
     addressProvider: address.provider,
     addressWarnings: address.warnings,
   };
@@ -526,7 +543,7 @@ function weatherBlock(weather: any, location: LocationSnapshot): string {
   const wind = weather.windSpeed === null ? "-" : `${Number(weather.windSpeed).toFixed(1).replace(/\.0$/, "")} km/h${weather.windDirection ? ` ${weather.windDirection}` : ""}`;
   return [
     "【当前天气】",
-    `地点: ${location.label || formatCoordinates(location.latitude, location.longitude)}`,
+    `地点: ${location.label || "-"}`,
     `天气: ${weather.condition || "-"}`,
     `温度: ${temp}${feels}`,
     `湿度: ${humidity}`,
