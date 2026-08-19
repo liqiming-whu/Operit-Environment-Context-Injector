@@ -4,11 +4,13 @@ import {
   getAppContext,
   getInjectionEnabled,
   loadSettings,
+  matchesBoundCharacterCard,
   setInjectionEnabled,
 } from "./shared";
 
 const EnhancedAIService = Java.com.ai.assistance.operit.api.chat.EnhancedAIService;
 const InputProcessingStateBase = "com.ai.assistance.operit.data.model.InputProcessingState$";
+declare function getCallerCardId(): string | undefined;
 
 function pushProcessingState(chatId?: string): void {
   try {
@@ -37,11 +39,19 @@ function activePromptOf(
 async function appendSafely(
   processedInput: string,
   chatId?: string,
-  _activePrompt?: ToolPkg.ActivePromptSnapshot
+  activePrompt?: ToolPkg.ActivePromptSnapshot
 ): Promise<string | null> {
-  pushProcessingState(chatId);
   try {
-    return await appendEnvironmentToMessage(processedInput);
+    let resolvedPrompt = activePrompt;
+    if (!resolvedPrompt) {
+      try {
+        const cardId = typeof getCallerCardId === "function" ? String(getCallerCardId() || "").trim() : "";
+        if (cardId) resolvedPrompt = { type: "character_card", id: cardId, name: "" };
+      } catch {}
+    }
+    if (!matchesBoundCharacterCard(loadSettings(), resolvedPrompt)) return null;
+    pushProcessingState(chatId);
+    return await appendEnvironmentToMessage(processedInput, resolvedPrompt);
   } catch (error) {
     console.log("environment_context append error", String(error));
     return null;

@@ -9,6 +9,8 @@ exports.setInjectionEnabled = setInjectionEnabled;
 exports.containsEnvironmentAttachment = containsEnvironmentAttachment;
 exports.buildEnvironmentContent = buildEnvironmentContent;
 exports.buildEnvironmentPreview = buildEnvironmentPreview;
+exports.listCharacterCards = listCharacterCards;
+exports.matchesBoundCharacterCard = matchesBoundCharacterCard;
 exports.appendEnvironmentToMessage = appendEnvironmentToMessage;
 const SETTINGS_PREFS_NAME = "toolpkg_environment_context_injector";
 const SETTINGS_KEY = "environment_context_injector_settings";
@@ -23,6 +25,8 @@ exports.DEFAULT_SETTINGS = {
     injectLocation: true,
     injectBattery: true,
     injectDevice: true,
+    customDeviceName: "",
+    boundCharacterCardIds: [],
     locationMode: "auto",
     manualAddress: "武汉",
     usePreciseLocation: false,
@@ -66,6 +70,9 @@ function sanitizeSettings(input) {
         injectLocation: Boolean(input?.injectLocation ?? exports.DEFAULT_SETTINGS.injectLocation),
         injectBattery: Boolean(input?.injectBattery ?? exports.DEFAULT_SETTINGS.injectBattery),
         injectDevice: Boolean(input?.injectDevice ?? exports.DEFAULT_SETTINGS.injectDevice),
+        customDeviceName: clean(input?.customDeviceName ?? exports.DEFAULT_SETTINGS.customDeviceName, 80),
+        boundCharacterCardIds: Array.from(new Set((Array.isArray(input?.boundCharacterCardIds) ? input.boundCharacterCardIds : [])
+            .map(id => clean(id, 120)).filter(Boolean))).slice(0, 100),
         locationMode,
         manualAddress: clean(input?.manualAddress ?? exports.DEFAULT_SETTINGS.manualAddress, 120),
         usePreciseLocation: Boolean(input?.usePreciseLocation ?? exports.DEFAULT_SETTINGS.usePreciseLocation),
@@ -150,15 +157,16 @@ function readBatteryBlock() {
         : status === Number(BatteryManagerClass.BATTERY_STATUS_CHARGING) ? "充电中" : "未充电";
     return ["【当前电量】", `电量: ${percentage}%`, `状态: ${state}`].join("\n");
 }
-function readDeviceBlock() {
+function readDeviceBlock(customDeviceName = "") {
     const Build = Java.type("android.os.Build");
     const SettingsGlobal = Java.type("android.provider.Settings$Global");
     const context = getAppContext();
     const manufacturer = clean(Build.MANUFACTURER, 40);
     const model = clean(Build.MODEL, 80);
-    let deviceName = "";
+    let deviceName = clean(customDeviceName, 80);
     try {
-        deviceName = clean(SettingsGlobal.getString(context.getContentResolver(), "device_name"), 80);
+        if (!deviceName)
+            deviceName = clean(SettingsGlobal.getString(context.getContentResolver(), "device_name"), 80);
     }
     catch { }
     if (!deviceName)
@@ -392,7 +400,7 @@ async function buildEnvironmentContent(settingsInput) {
     }
     if (settings.injectDevice) {
         try {
-            blocks.push(readDeviceBlock());
+            blocks.push(readDeviceBlock(settings.customDeviceName));
         }
         catch (error) {
             blocks.push(errorBlock("【设备信息】", error));
@@ -431,10 +439,28 @@ function buildAttachment(content) {
     const fileName = `${ATTACHMENT_FILE_PREFIX}${formatTimestamp(now).replace(/[: ]/g, "-")}`;
     return `<attachment id="${escapeXml(id)}" filename="${escapeXml(fileName)}" type="text/plain" size="${content.length}">${escapeXml(content)}</attachment>`;
 }
-async function appendEnvironmentToMessage(messageText) {
+async function listCharacterCards() {
+    try {
+        const result = await Tools.Chat.listCharacterCards();
+        const cards = Array.isArray(result?.cards) ? result.cards : [];
+        return cards.map((card) => ({
+            id: clean(card?.id, 120),
+            name: clean(card?.name, 120),
+        })).filter((card) => card.id).sort((a, b) => a.name.localeCompare(b.name));
+    }
+    catch {
+        return [];
+    }
+}
+function matchesBoundCharacterCard(settings, activePrompt) {
+    if (settings.boundCharacterCardIds.length === 0)
+        return true;
+    return Boolean(activePrompt && activePrompt.type === "character_card" && settings.boundCharacterCardIds.includes(String(activePrompt.id || "").trim()));
+}
+async function appendEnvironmentToMessage(messageText, activePrompt) {
     const input = String(messageText || "");
     const settings = loadSettings();
-    if (!settings.masterEnabled || !input.trim() || containsEnvironmentAttachment(input))
+    if (!settings.masterEnabled || !matchesBoundCharacterCard(settings, activePrompt) || !input.trim() || containsEnvironmentAttachment(input))
         return null;
     const content = await buildEnvironmentContent(settings);
     if (!content.trim())

@@ -60,6 +60,10 @@ function Screen(ctx) {
     const injectLocation = state(ctx, "injectLocation", initial.injectLocation);
     const injectBattery = state(ctx, "injectBattery", initial.injectBattery);
     const injectDevice = state(ctx, "injectDevice", initial.injectDevice);
+    const customDeviceName = state(ctx, "customDeviceName", initial.customDeviceName);
+    const boundCharacterCardIds = state(ctx, "boundCharacterCardIds", initial.boundCharacterCardIds);
+    const availableCharacterCards = state(ctx, "availableCharacterCards", []);
+    const characterCardsLoading = state(ctx, "characterCardsLoading", false);
     const locationMode = state(ctx, "locationMode", initial.locationMode);
     const manualAddress = state(ctx, "manualAddress", initial.manualAddress);
     const precise = state(ctx, "precise", initial.usePreciseLocation);
@@ -78,6 +82,8 @@ function Screen(ctx) {
         injectLocation.set(next.injectLocation);
         injectBattery.set(next.injectBattery);
         injectDevice.set(next.injectDevice);
+        customDeviceName.set(next.customDeviceName);
+        boundCharacterCardIds.set(next.boundCharacterCardIds);
         locationMode.set(next.locationMode);
         manualAddress.set(next.manualAddress);
         precise.set(next.usePreciseLocation);
@@ -102,6 +108,8 @@ function Screen(ctx) {
         injectLocation: injectLocation.value,
         injectBattery: injectBattery.value,
         injectDevice: injectDevice.value,
+        customDeviceName: customDeviceName.value,
+        boundCharacterCardIds: boundCharacterCardIds.value,
         locationMode: locationMode.value,
         manualAddress: manualAddress.value,
         usePreciseLocation: precise.value,
@@ -118,9 +126,15 @@ function Screen(ctx) {
             status.set("手动地址不能为空。");
             return false;
         }
-        patch({ injectionTimeoutSeconds: Math.round(seconds), manualAddress: manualAddress.value });
+        patch({ injectionTimeoutSeconds: Math.round(seconds), manualAddress: manualAddress.value, customDeviceName: customDeviceName.value });
         status.set("设置已保存。");
         return true;
+    };
+    const toggleBoundCharacterCard = (cardId) => {
+        const next = boundCharacterCardIds.value.includes(cardId)
+            ? boundCharacterCardIds.value.filter(id => id !== cardId)
+            : [...boundCharacterCardIds.value, cardId];
+        patch({ boundCharacterCardIds: next });
     };
     const runPreview = async (manualTest) => {
         if (running.value || !applyTextSettings())
@@ -169,7 +183,7 @@ function Screen(ctx) {
                     singleLine: true,
                 }),
                 ctx.UI.Text({ text: "允许 3–60 秒，默认 10 秒。", style: "bodySmall", color: "onSurfaceVariant" }),
-                ctx.UI.Button({ text: "保存超时和地址", fillMaxWidth: true, onClick: () => { applyTextSettings(); } }),
+                ctx.UI.Button({ text: "保存文本设置", fillMaxWidth: true, onClick: () => { applyTextSettings(); } }),
             ]),
         ]),
         title(ctx, "bolt", "注入项目"),
@@ -183,6 +197,48 @@ function Screen(ctx) {
             toggle(ctx, "电量", "电池百分比与充电状态", injectBattery.value, value => patch({ injectBattery: value })),
             divider(ctx),
             toggle(ctx, "设备信息", "设备名称、型号和 Android 版本", injectDevice.value, value => patch({ injectDevice: value })),
+        ]),
+        title(ctx, "devices", "设备名称"),
+        card(ctx, [
+            ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+                ctx.UI.TextField({
+                    label: "自定义设备名称（可选）",
+                    placeholder: "例如：我的手机",
+                    value: customDeviceName.value,
+                    onValueChange: customDeviceName.set,
+                    singleLine: true,
+                }),
+                ctx.UI.Text({ text: "非空时优先使用自定义名称；留空时读取系统设备名称。修改后点击“保存文本设置”。", style: "bodySmall", color: "onSurfaceVariant" }),
+            ]),
+        ]),
+        title(ctx, "person", "绑定角色卡"),
+        card(ctx, [
+            ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+                ctx.UI.Text({
+                    text: boundCharacterCardIds.value.length === 0
+                        ? "当前不限制角色卡，所有对话都可注入。"
+                        : `已选择 ${boundCharacterCardIds.value.length} 张角色卡，仅这些角色卡可注入。`,
+                    style: "bodySmall",
+                    color: boundCharacterCardIds.value.length === 0 ? "onSurfaceVariant" : "primary",
+                }),
+                ...(characterCardsLoading.value
+                    ? [ctx.UI.Text({ text: "正在读取角色卡…", style: "bodySmall", color: "onSurfaceVariant" })]
+                    : availableCharacterCards.value.length
+                        ? availableCharacterCards.value.map(cardOption => ctx.UI.Row({ key: `card-${cardOption.id}`, fillMaxWidth: true, verticalAlignment: "center", horizontalArrangement: "spaceBetween" }, [
+                            ctx.UI.Text({ text: cardOption.name || cardOption.id, style: "bodyMedium", weight: 1 }),
+                            ctx.UI.Checkbox({
+                                checked: boundCharacterCardIds.value.includes(cardOption.id),
+                                onCheckedChange: () => toggleBoundCharacterCard(cardOption.id),
+                            }),
+                        ]))
+                        : [ctx.UI.Text({ text: "未读取到角色卡。可稍后重新打开设置页重试。", style: "bodySmall", color: "onSurfaceVariant" })]),
+                ctx.UI.Button({
+                    text: "清除角色卡限制",
+                    enabled: boundCharacterCardIds.value.length > 0,
+                    fillMaxWidth: true,
+                    onClick: () => patch({ boundCharacterCardIds: [] }),
+                }),
+            ]),
         ]),
         title(ctx, "locationOn", "地点来源"),
         card(ctx, [
@@ -248,7 +304,7 @@ function Screen(ctx) {
     children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: "secondaryContainer" }, [
         ctx.UI.Text({
             padding: 12,
-            text: `${master.value ? "已启用" : "已关闭"}；${persist.value ? "随消息保存" : "仅临时发给模型"}；地点：${locationMode.value === "auto" ? "自动定位" : manualAddress.value || "未填写"}；天气：${weather.value}。`,
+            text: `${master.value ? "已启用" : "已关闭"}；${persist.value ? "随消息保存" : "仅临时发给模型"}；角色卡：${boundCharacterCardIds.value.length ? `限定 ${boundCharacterCardIds.value.length} 张` : "不限制"}；设备名：${customDeviceName.value.trim() || "系统名称"}；地点：${locationMode.value === "auto" ? "自动定位" : manualAddress.value || "未填写"}；天气：${weather.value}。`,
             style: "bodySmall",
             color: "onSecondaryContainer",
         }),
@@ -261,6 +317,13 @@ function Screen(ctx) {
             if (!initialized.value) {
                 initialized.set(true);
                 sync((0, shared_1.loadSettings)());
+                characterCardsLoading.set(true);
+                try {
+                    availableCharacterCards.set(await (0, shared_1.listCharacterCards)());
+                }
+                finally {
+                    characterCardsLoading.set(false);
+                }
             }
         },
     }, children);

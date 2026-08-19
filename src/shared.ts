@@ -16,6 +16,8 @@ export type EnvironmentInjectionSettings = {
   injectLocation: boolean;
   injectBattery: boolean;
   injectDevice: boolean;
+  customDeviceName: string;
+  boundCharacterCardIds: string[];
   locationMode: LocationMode;
   manualAddress: string;
   usePreciseLocation: boolean;
@@ -32,6 +34,8 @@ export const DEFAULT_SETTINGS: EnvironmentInjectionSettings = {
   injectLocation: true,
   injectBattery: true,
   injectDevice: true,
+  customDeviceName: "",
+  boundCharacterCardIds: [],
   locationMode: "auto",
   manualAddress: "武汉",
   usePreciseLocation: false,
@@ -92,6 +96,9 @@ function sanitizeSettings(input?: Partial<EnvironmentInjectionSettings> | null):
     injectLocation: Boolean(input?.injectLocation ?? DEFAULT_SETTINGS.injectLocation),
     injectBattery: Boolean(input?.injectBattery ?? DEFAULT_SETTINGS.injectBattery),
     injectDevice: Boolean(input?.injectDevice ?? DEFAULT_SETTINGS.injectDevice),
+    customDeviceName: clean(input?.customDeviceName ?? DEFAULT_SETTINGS.customDeviceName, 80),
+    boundCharacterCardIds: Array.from(new Set((Array.isArray(input?.boundCharacterCardIds) ? input.boundCharacterCardIds : [])
+      .map(id => clean(id, 120)).filter(Boolean))).slice(0, 100),
     locationMode,
     manualAddress: clean(input?.manualAddress ?? DEFAULT_SETTINGS.manualAddress, 120),
     usePreciseLocation: Boolean(input?.usePreciseLocation ?? DEFAULT_SETTINGS.usePreciseLocation),
@@ -182,15 +189,15 @@ function readBatteryBlock(): string {
   return ["【当前电量】", `电量: ${percentage}%`, `状态: ${state}`].join("\n");
 }
 
-function readDeviceBlock(): string {
+function readDeviceBlock(customDeviceName = ""): string {
   const Build = Java.type("android.os.Build");
   const SettingsGlobal = Java.type("android.provider.Settings$Global");
   const context = getAppContext();
   const manufacturer = clean(Build.MANUFACTURER, 40);
   const model = clean(Build.MODEL, 80);
-  let deviceName = "";
+  let deviceName = clean(customDeviceName, 80);
   try {
-    deviceName = clean(SettingsGlobal.getString(context.getContentResolver(), "device_name"), 80);
+    if (!deviceName) deviceName = clean(SettingsGlobal.getString(context.getContentResolver(), "device_name"), 80);
   } catch {}
   if (!deviceName) deviceName = clean([manufacturer, model].filter(Boolean).join(" "), 80) || "Android 设备";
   return [
@@ -431,7 +438,7 @@ export async function buildEnvironmentContent(settingsInput?: EnvironmentInjecti
     try { blocks.push(readBatteryBlock()); } catch (error) { blocks.push(errorBlock("【当前电量】", error)); }
   }
   if (settings.injectDevice) {
-    try { blocks.push(readDeviceBlock()); } catch (error) { blocks.push(errorBlock("【设备信息】", error)); }
+    try { blocks.push(readDeviceBlock(settings.customDeviceName)); } catch (error) { blocks.push(errorBlock("【设备信息】", error)); }
   }
 
   let location: LocationSnapshot | null = null;
@@ -461,10 +468,36 @@ function buildAttachment(content: string): string {
   return `<attachment id="${escapeXml(id)}" filename="${escapeXml(fileName)}" type="text/plain" size="${content.length}">${escapeXml(content)}</attachment>`;
 }
 
-export async function appendEnvironmentToMessage(messageText: string): Promise<string | null> {
+export type CharacterCardOption = { id: string; name: string };
+
+export async function listCharacterCards(): Promise<CharacterCardOption[]> {
+  try {
+    const result = await Tools.Chat.listCharacterCards();
+    const cards = Array.isArray(result?.cards) ? result.cards : [];
+    return cards.map((card: any) => ({
+      id: clean(card?.id, 120),
+      name: clean(card?.name, 120),
+    })).filter((card: CharacterCardOption) => card.id).sort((a: CharacterCardOption, b: CharacterCardOption) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+export function matchesBoundCharacterCard(
+  settings: EnvironmentInjectionSettings,
+  activePrompt?: ToolPkg.ActivePromptSnapshot | null
+): boolean {
+  if (settings.boundCharacterCardIds.length === 0) return true;
+  return Boolean(activePrompt && activePrompt.type === "character_card" && settings.boundCharacterCardIds.includes(String(activePrompt.id || "").trim()));
+}
+
+export async function appendEnvironmentToMessage(
+  messageText: string,
+  activePrompt?: ToolPkg.ActivePromptSnapshot | null
+): Promise<string | null> {
   const input = String(messageText || "");
   const settings = loadSettings();
-  if (!settings.masterEnabled || !input.trim() || containsEnvironmentAttachment(input)) return null;
+  if (!settings.masterEnabled || !matchesBoundCharacterCard(settings, activePrompt) || !input.trim() || containsEnvironmentAttachment(input)) return null;
   const content = await buildEnvironmentContent(settings);
   if (!content.trim()) return null;
   return `${input.replace(/\s+$/, "")} ${buildAttachment(content)}`.trim();

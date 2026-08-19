@@ -30,10 +30,21 @@ function pushProcessingState(chatId) {
 function activePromptOf(input) {
     return input.eventPayload.metadata?.activePrompt;
 }
-async function appendSafely(processedInput, chatId, _activePrompt) {
-    pushProcessingState(chatId);
+async function appendSafely(processedInput, chatId, activePrompt) {
     try {
-        return await (0, shared_1.appendEnvironmentToMessage)(processedInput);
+        let resolvedPrompt = activePrompt;
+        if (!resolvedPrompt) {
+            try {
+                const cardId = typeof getCallerCardId === "function" ? String(getCallerCardId() || "").trim() : "";
+                if (cardId)
+                    resolvedPrompt = { type: "character_card", id: cardId, name: "" };
+            }
+            catch { }
+        }
+        if (!(0, shared_1.matchesBoundCharacterCard)((0, shared_1.loadSettings)(), resolvedPrompt))
+            return null;
+        pushProcessingState(chatId);
+        return await (0, shared_1.appendEnvironmentToMessage)(processedInput, resolvedPrompt);
     }
     catch (error) {
         console.log("environment_context append error", String(error));

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 - 2026-08-19
+
+- 新增自定义设备名称，设置后优先于Android系统设备名称。
+- 参考官方世界书插件新增角色卡绑定，并支持多选。
+- 未选择角色卡时保持全局注入；选择后仅匹配当前活动角色卡ID。
+- 角色卡列表通过官方`Tools.Chat.listCharacterCards()`读取，Hook优先使用`metadata.activePrompt`并以`getCallerCardId()`兜底。
+- 增加设备名称覆盖、角色卡匹配/拦截、列表和UI渲染自动测试。
+
 ## 1.0.0 - 2026-08-18
 
 - 首次发布 Operit 环境信息注入 ToolPkg。
