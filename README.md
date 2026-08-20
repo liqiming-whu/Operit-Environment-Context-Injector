@@ -12,6 +12,9 @@ Operit ToolPkg 环境信息注入插件。基于官方 `examples/message_insert`
 - 普通预览与聊天注入在有效期内复用同位置缓存；手动测试会绕过缓存并强制刷新。
 - 地点支持设备自动定位或手动地址。
 - 自动定位支持 Nominatim、BigDataCloud、Photon，以及按该顺序容错的 Auto 模式。
+  - Nominatim：OpenStreetMap 反向地址服务，支持简体中文，无代理可能失败。
+  - BigDataCloud：免密钥反向地址服务，支持繁体中文地址。
+  - Photon：基于 OpenStreetMap 的反向地址服务，不支持简体中文。
 - 天气支持 Auto、Open-Meteo、MET Norway、wttr.in；Auto 按 Open-Meteo → MET Norway → wttr.in 顺序容错，单独选择后两者时仍保留失败回退 Open-Meteo 的兼容行为。
 - 设置页提供实时规则摘要、注入内容预览和手动测试。
 - 支持自定义设备名称；非空时覆盖系统读取的设备名称。
