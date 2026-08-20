@@ -362,9 +362,9 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
       divider(ctx),
       radio(ctx, "Nominatim", "OpenStreetMap 反向地址服务(支持简体中文，无代理可能失败)", "nominatim", reverse.value, value => patch({ reverseGeocodingProvider: value })),
       divider(ctx),
-      radio(ctx, "BigDataCloud", "免密钥反向地址服务(支持繁体中文地址)", "bigdatacloud", reverse.value, value => patch({ reverseGeocodingProvider: value })),
+      radio(ctx, "BigDataCloud", "免密钥反向地址服务（支持繁体中文）", "bigdatacloud", reverse.value, value => patch({ reverseGeocodingProvider: value })),
       divider(ctx),
-      radio(ctx, "Photon", "基于 OpenStreetMap的反向地址服务(不支持简体中文)", "photon", reverse.value, value => patch({ reverseGeocodingProvider: value })),
+      radio(ctx, "Photon", "基于 OpenStreetMap的反向地址服务(不支持中文)", "photon", reverse.value, value => patch({ reverseGeocodingProvider: value })),
     ]));
   }
 

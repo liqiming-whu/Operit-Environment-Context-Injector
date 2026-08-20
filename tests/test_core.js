@@ -190,7 +190,7 @@ global.ToolPkg = {
   const ctx = { UI, useState: (key, initial) => { if (!states.has(key)) states.set(key, initial); return [states.get(key), value => states.set(key, value)]; } };
   const tree = registrations.ui[0].screen(ctx);
   let text = JSON.stringify(tree);
-  for (const label of ['自定义设备名称', '绑定角色卡', '清除角色卡限制', '按 Open-Meteo → MET Norway → wttr.in 顺序容错', 'OpenStreetMap 反向地址服务(支持简体中文，无代理可能失败)', '免密钥反向地址服务(支持繁体中文地址)', '基于 OpenStreetMap的反向地址服务(不支持简体中文)']) assert(text.includes(label), label);
+  for (const label of ['自定义设备名称', '绑定角色卡', '清除角色卡限制', '按 Open-Meteo → MET Norway → wttr.in 顺序容错', 'OpenStreetMap 反向地址服务(支持简体中文，无代理可能失败)', '免密钥反向地址服务（支持繁体中文）', '基于 OpenStreetMap的反向地址服务(不支持中文)']) assert(text.includes(label), label);
   await tree.props.onLoad();
   const loadedTree = registrations.ui[0].screen(ctx);
   text = JSON.stringify(loadedTree);
