@@ -268,5 +268,97 @@ global.ToolPkg = {
   assert(!text.includes('保存超时和地址'));
   assert(!text.includes('修改后点击'));
   assert.equal(states.get('characterCardsLoading'), false);
-  console.log('ENV_INJECTOR_V200_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
+  // UI actions re-render after each edit, matching Compose's state closure lifecycle.
+  const render = () => registrations.ui[0].screen(ctx);
+  const findNodes = (tree, predicate) => {
+    const found = [];
+    const walk = n => { if (!n || typeof n !== 'object') return; if (predicate(n)) found.push(n); (n.children || []).forEach(walk); };
+    walk(tree); return found;
+  };
+  const buttons = label => findNodes(render(), n => n.type === 'Button' && n.props.text === label);
+  const edit = (label, value, index = 0) => {
+    const fields = findNodes(render(), n => n.type === 'TextField' && n.props.label === label);
+    assert(fields[index], label); fields[index].props.onValueChange(value);
+  };
+  const assertFeedbackBefore = (label, index = 0) => {
+    const tree = render();
+    const button = findNodes(tree, n => n.type === 'Button' && n.props.text === label)[index];
+    const parent = findNodes(tree, n => (n.children || []).includes(button))[0];
+    const previous = parent.children[parent.children.indexOf(button) - 1];
+    assert.equal(previous?.props?.text, states.get('status'), `feedback before ${label}`);
+    assert.equal(findNodes(tree, n => n.type === 'Text' && n.props.text === states.get('status')).length, 1, 'no duplicated global feedback');
+  };
+  assert(JSON.stringify(render()).includes('例如：小明'));
+  assert(!JSON.stringify(render()).includes('例如：启明'));
+  const cycleLabel = '任意一次已知经期起始日期（留空不注入）';
+  assert.equal(findNodes(render(), n => n.type === 'TextField' && n.props.label === cycleLabel).length, 2);
+
+  // Each saving action, including old settings buttons, has local success and validation feedback.
+  for (let i = 0; i < 4; i++) {
+    await buttons('保存设置')[i].props.onClick();
+    assertFeedbackBefore('保存设置', i);
+  }
+  for (const [label, value, index] of [['注入总超时（秒）', '0', 0], ['手动地址', '', 2], ['天气刷新间隔（分钟，5–180）', '0', 3]]) {
+    const old = findNodes(render(), n => n.type === 'TextField' && n.props.label === label)[0].props.value;
+    edit(label, value); await buttons('保存设置')[index].props.onClick();
+    assertFeedbackBefore('保存设置', index); assert(!states.get('status').includes('已保存'));
+    edit(label, old);
+  }
+  edit('用户生日', 'bad'); await buttons('保存名称、地区和生日')[0].props.onClick();
+  assertFeedbackBefore('保存名称、地区和生日');
+  edit('用户生日', '2000-08-19'); edit('角色生日', '08-20');
+  await buttons('保存名称、地区和生日')[0].props.onClick(); assertFeedbackBefore('保存名称、地区和生日');
+  assert.equal(shared.loadSettings().userBirthday, '2000-08-19');
+  edit('用户生日', '   '); edit('角色生日', '');
+  await buttons('保存名称、地区和生日')[0].props.onClick();
+  assert.equal(shared.loadSettings().userBirthday, ''); assert.equal(shared.loadSettings().characterBirthday, '');
+
+  edit(cycleLabel, '2026-08-01', 0); edit(cycleLabel, '2026-08-02', 1); edit('怀孕时间', '2026-06-01');
+  await buttons('保存经期和孕期')[0].props.onClick(); assertFeedbackBefore('保存经期和孕期');
+  assert.equal(shared.loadSettings().userCycleStartDate, '2026-08-01');
+  edit(cycleLabel, 'bad', 0); await buttons('保存经期和孕期')[0].props.onClick();
+  assertFeedbackBefore('保存经期和孕期'); assert.equal(shared.loadSettings().userCycleStartDate, '2026-08-01');
+  edit(cycleLabel, '', 0); edit(cycleLabel, '   ', 1); edit('怀孕时间', '');
+  await buttons('保存经期和孕期')[0].props.onClick();
+  for (const key of ['userCycleStartDate', 'characterCycleStartDate', 'pregnancyStartDate']) assert.equal(shared.loadSettings()[key], '');
+
+  // Existing custom anniversaries can now be cleared individually; other entries survive.
+  shared.saveSettings({ anniversaries: [] }); states.set('anniversaries', []);
+  edit('纪念日名称', '清空测试'); edit('纪念日日期', '08-19');
+  await buttons('添加纪念日')[0].props.onClick(); assertFeedbackBefore('添加纪念日');
+  edit('纪念日名称', '保留测试'); edit('纪念日日期', '08-20');
+  await buttons('添加纪念日')[0].props.onClick();
+  edit('已保存的纪念日日期（留空不注入）', 'bad');
+  await buttons('保存纪念日日期')[0].props.onClick(); assertFeedbackBefore('保存纪念日日期');
+  assert.equal(shared.loadSettings().anniversaries.length, 2);
+  edit('已保存的纪念日日期（留空不注入）', '08-21');
+  await buttons('保存纪念日日期')[0].props.onClick(); assertFeedbackBefore('保存纪念日日期');
+  assert.equal(shared.loadSettings().anniversaries[0].date, '08-21');
+  edit('已保存的纪念日日期（留空不注入）', ''); await buttons('保存纪念日日期')[0].props.onClick();
+  assertFeedbackBefore('添加纪念日'); assert.deepEqual(shared.loadSettings().anniversaries.map(e => e.name), ['保留测试']);
+  edit('已保存的纪念日日期（留空不注入）', '   '); await buttons('保存纪念日日期')[0].props.onClick();
+  assert.equal(shared.loadSettings().anniversaries.length, 0);
+
+  // Storage failure must not be overwritten by a success message or discard typed text.
+  const realEdit = prefs.edit;
+  prefs.edit = () => { throw new Error('mock write failure'); };
+  edit('用户生日', '08-22'); await buttons('保存名称、地区和生日')[0].props.onClick();
+  assertFeedbackBefore('保存名称、地区和生日'); assert(states.get('status').includes('保存失败'));
+  assert.equal(states.get('userBirthday'), '08-22'); assert.equal(shared.loadSettings().userBirthday, '');
+  await buttons('保存设置')[1].props.onClick(); assertFeedbackBefore('保存设置', 1);
+  assert(states.get('status').includes('保存失败')); prefs.edit = realEdit;
+  edit('用户生日', '');
+
+  // With switches still enabled, cleared dates remain empty after reopening and emit no blocks.
+  shared.saveSettings({ masterEnabled: true, boundCharacterCardIds: [], anniversariesEnabled: true, cycleEnabled: true, pregnancyEnabled: true,
+    injectTime: false, injectCalendar: false, injectWeather: false, injectLocation: false, injectBattery: false, injectDevice: false });
+  const reopenedStates = new Map();
+  const reopenedCtx = { UI, useState: (key, initial) => { if (!reopenedStates.has(key)) reopenedStates.set(key, initial); return [reopenedStates.get(key), value => reopenedStates.set(key, value)]; } };
+  await registrations.ui[0].screen(reopenedCtx).props.onLoad();
+  for (const key of ['userBirthday', 'characterBirthday', 'userCycleStartDate', 'characterCycleStartDate', 'pregnancyStartDate']) assert.equal(reopenedStates.get(key), '');
+  assert.equal(await shared.buildEnvironmentPreview(shared.loadSettings()), '');
+  assert.equal(await shared.appendEnvironmentToMessage('空日期测试', { type: 'character_card', id: 'card-a', name: '甲' }), null);
+  console.log('UI_CLEAR_DATES_AND_LOCAL_FEEDBACK_PASS');
+
+  console.log('ENV_INJECTOR_V201_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
 })().catch(error => { console.error(error); process.exitCode = 1; });

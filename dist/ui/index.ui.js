@@ -93,6 +93,16 @@ function Screen(ctx) {
     const weather = state(ctx, "weather", initial.weatherProvider);
     const preview = state(ctx, "preview", "尚未获取预览。点击下方按钮后只读取环境，不会写入聊天记录。");
     const status = state(ctx, "status", "");
+    const statusTarget = state(ctx, "statusTarget", "");
+    const anniversaryDates = state(ctx, "anniversaryDates", {});
+    const notify = (target, text) => {
+        statusTarget.set(target);
+        status.set(text);
+    };
+    // Pure render helper: only the action's own feedback entry is visible.
+    const feedback = (target) => status.value && statusTarget.value === target
+        ? [ctx.UI.Text({ text: status.value, style: "bodySmall", color: "onSurfaceVariant" })]
+        : [];
     const running = state(ctx, "running", false);
     const initialized = state(ctx, "initialized", false);
     const sync = (next) => {
@@ -132,55 +142,50 @@ function Screen(ctx) {
         reverse.set(next.reverseGeocodingProvider);
         weather.set(next.weatherProvider);
     };
-    const patch = (value) => {
+    const patch = (value, target = "general", success = "") => {
         try {
             sync((0, shared_1.saveSettings)(value));
-            status.set("");
+            notify(target, success);
+            return true;
         }
         catch (error) {
-            status.set(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
+            notify(target, `保存失败: ${error instanceof Error ? error.message : String(error)}`);
+            return false;
         }
     };
     const saveTimeout = () => {
         const seconds = Number(timeout.value.trim());
         if (!Number.isFinite(seconds) || seconds < 3 || seconds > 60) {
-            status.set("注入超时必须是 3 至 60 秒之间的整数。");
+            notify("timeout", "注入超时必须是 3 至 60 秒之间的整数。");
             return false;
         }
-        patch({ injectionTimeoutSeconds: Math.round(seconds) });
-        status.set("设置已保存。");
-        return true;
+        return patch({ injectionTimeoutSeconds: Math.round(seconds) }, "timeout", "设置已保存。");
     };
     const saveRefreshIntervals = () => {
         const weatherMinutes = Number(weatherRefreshInterval.value.trim());
         const locationMinutes = Number(locationRefreshInterval.value.trim());
         if (!Number.isFinite(weatherMinutes) || weatherMinutes < 5 || weatherMinutes > 180) {
-            status.set("天气刷新间隔必须是 5 至 180 分钟之间的整数。");
+            notify("refresh", "天气刷新间隔必须是 5 至 180 分钟之间的整数。");
             return false;
         }
         if (!Number.isFinite(locationMinutes) || locationMinutes < 5 || locationMinutes > 60) {
-            status.set("定位刷新间隔必须是 5 至 60 分钟之间的整数。");
+            notify("refresh", "定位刷新间隔必须是 5 至 60 分钟之间的整数。");
             return false;
         }
-        patch({
+        return patch({
             weatherRefreshIntervalMinutes: Math.round(weatherMinutes),
             locationRefreshIntervalMinutes: Math.round(locationMinutes),
-        });
-        status.set("设置已保存。");
-        return true;
+        }, "refresh", "设置已保存。");
     };
     const saveDeviceName = () => {
-        patch({ customDeviceName: customDeviceName.value });
-        status.set("设置已保存。");
+        patch({ customDeviceName: customDeviceName.value }, "device", "设置已保存。");
     };
     const saveManualAddress = () => {
         if (!manualAddress.value.trim()) {
-            status.set("手动地址不能为空。");
+            notify("address", "手动地址不能为空。");
             return false;
         }
-        patch({ manualAddress: manualAddress.value });
-        status.set("设置已保存。");
-        return true;
+        return patch({ manualAddress: manualAddress.value }, "address", "设置已保存。");
     };
     const toggleBoundCharacterCard = (cardId) => {
         const next = boundCharacterCardIds.value.includes(cardId)
@@ -196,26 +201,24 @@ function Screen(ctx) {
     const validOptionalFullDate = (value) => !value.trim() || /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
     const saveIdentityAndDates = () => {
         if (!validOptionalDate(userBirthday.value) || !validOptionalDate(characterBirthday.value)) {
-            status.set("生日必须使用 MM-DD 或 YYYY-MM-DD 格式，或留空。");
+            notify("identity", "生日必须使用 MM-DD 或 YYYY-MM-DD 格式，或留空。");
             return false;
         }
         if (!/^[A-Za-z]{2}$/.test(countryCode.value.trim())) {
-            status.set("国家/地区代码必须是两个英文字母，例如 CN、US、JP。");
+            notify("identity", "国家/地区代码必须是两个英文字母，例如 CN、US、JP。");
             return false;
         }
-        patch({
+        return patch({
             userName: userName.value,
             characterName: characterName.value,
             countryCode: countryCode.value.toUpperCase(),
             userBirthday: userBirthday.value,
             characterBirthday: characterBirthday.value,
-        });
-        status.set("名称、地区和生日设置已保存。");
-        return true;
+        }, "identity", "名称、地区和生日设置已保存。");
     };
     const saveWellbeing = () => {
         if (![userCycleStartDate.value, characterCycleStartDate.value, pregnancyStartDate.value].every(validOptionalFullDate)) {
-            status.set("经期起始日期和怀孕时间必须使用 YYYY-MM-DD 格式，或留空。");
+            notify("wellbeing", "经期起始日期和怀孕时间必须使用 YYYY-MM-DD 格式，或留空。");
             return false;
         }
         for (const [label, value, min, max] of [
@@ -224,11 +227,11 @@ function Screen(ctx) {
         ]) {
             const number = Number(value);
             if (!Number.isFinite(number) || number < min || number > max) {
-                status.set(`${label}必须是 ${min} 至 ${max} 之间的整数。`);
+                notify("wellbeing", `${label}必须是 ${min} 至 ${max} 之间的整数。`);
                 return false;
             }
         }
-        patch({
+        return patch({
             userCycleStartDate: userCycleStartDate.value,
             userCycleLength: Number(userCycleLength.value),
             userPeriodDuration: Number(userPeriodDuration.value),
@@ -237,43 +240,50 @@ function Screen(ctx) {
             characterPeriodDuration: Number(characterPeriodDuration.value),
             pregnancyOwner: pregnancyOwner.value,
             pregnancyStartDate: pregnancyStartDate.value,
-        });
-        status.set("生理状态设置已保存。");
-        return true;
+        }, "wellbeing", "生理状态设置已保存。");
     };
     const addAnniversary = () => {
         const name = anniversaryName.value.trim();
         const date = anniversaryDate.value.trim();
         if (!name || !/^(?:\d{4}-)?\d{2}-\d{2}$/.test(date)) {
-            status.set("请填写纪念日名称，以及 MM-DD 或 YYYY-MM-DD 格式的日期。");
+            notify("anniversary", "请填写纪念日名称，以及 MM-DD 或 YYYY-MM-DD 格式的日期。");
             return;
         }
         const next = [...anniversaries.value, { id: `event-${Date.now()}`, name, date, type: "anniversary" }];
-        patch({ anniversaries: next });
+        if (!patch({ anniversaries: next }, "anniversary", "纪念日已添加。"))
+            return;
         anniversaryName.set("");
         anniversaryDate.set("");
-        status.set("纪念日已添加。");
+    };
+    const saveAnniversaryDate = (event) => {
+        const date = (anniversaryDates.value[event.id] ?? event.date).trim();
+        const target = `anniversary-${event.id}`;
+        if (!validOptionalDate(date)) {
+            notify(target, "纪念日日期必须使用 MM-DD 或 YYYY-MM-DD 格式，或留空。");
+            return;
+        }
+        patch({ anniversaries: anniversaries.value.map(item => item.id === event.id ? { ...item, date } : item) }, date ? target : "anniversary", date ? "纪念日已保存。" : "纪念日日期已清空，不再注入。");
     };
     const applyPendingTextSettings = () => {
         const seconds = Number(timeout.value.trim());
         if (!Number.isFinite(seconds) || seconds < 3 || seconds > 60) {
-            status.set("注入超时必须是 3 至 60 秒之间的整数。");
+            notify("timeout", "注入超时必须是 3 至 60 秒之间的整数。");
             return false;
         }
         if (locationMode.value === "manual" && !manualAddress.value.trim()) {
-            status.set("手动地址不能为空。");
+            notify("address", "手动地址不能为空。");
             return false;
         }
         if (!validOptionalDate(userBirthday.value) || !validOptionalDate(characterBirthday.value)) {
-            status.set("生日必须使用 MM-DD 或 YYYY-MM-DD 格式，或留空。");
+            notify("identity", "生日必须使用 MM-DD 或 YYYY-MM-DD 格式，或留空。");
             return false;
         }
         if (!/^[A-Za-z]{2}$/.test(countryCode.value.trim())) {
-            status.set("国家/地区代码必须是两个英文字母，例如 CN、US、JP。");
+            notify("identity", "国家/地区代码必须是两个英文字母，例如 CN、US、JP。");
             return false;
         }
         if (![userCycleStartDate.value, characterCycleStartDate.value, pregnancyStartDate.value].every(validOptionalFullDate)) {
-            status.set("经期起始日期和怀孕时间必须使用 YYYY-MM-DD 格式，或留空。");
+            notify("wellbeing", "经期起始日期和怀孕时间必须使用 YYYY-MM-DD 格式，或留空。");
             return false;
         }
         for (const [label, value, min, max] of [
@@ -282,7 +292,7 @@ function Screen(ctx) {
         ]) {
             const number = Number(value);
             if (!Number.isFinite(number) || number < min || number > max) {
-                status.set(`${label}必须是 ${min} 至 ${max} 之间的整数。`);
+                notify("wellbeing", `${label}必须是 ${min} 至 ${max} 之间的整数。`);
                 return false;
             }
         }
@@ -308,7 +318,7 @@ function Screen(ctx) {
             return true;
         }
         catch (error) {
-            status.set(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
+            notify("preview", `保存失败: ${error instanceof Error ? error.message : String(error)}`);
             return false;
         }
     };
@@ -316,19 +326,19 @@ function Screen(ctx) {
         if (running.value || !applyPendingTextSettings())
             return;
         running.set(true);
-        status.set(manualTest ? "正在手动测试环境采集…" : "正在生成预览…");
+        notify("preview", manualTest ? "正在手动测试环境采集…" : "正在生成预览…");
         const started = Date.now();
         try {
             const content = await (0, shared_1.buildEnvironmentPreview)((0, shared_1.loadSettings)(), manualTest);
             preview.set(content || "没有启用任何注入项目。");
             const elapsed = ((Date.now() - started) / 1000).toFixed(1);
             const partial = content.includes("错误:");
-            status.set(manualTest
+            notify("preview", manualTest
                 ? `${partial ? "测试完成，但部分信息不可用" : "测试通过"}，耗时 ${elapsed} 秒。`
                 : `预览已更新，耗时 ${elapsed} 秒。`);
         }
         catch (error) {
-            status.set(`测试失败: ${error instanceof Error ? error.message : String(error)}`);
+            notify("preview", `测试失败: ${error instanceof Error ? error.message : String(error)}`);
         }
         finally {
             running.set(false);
@@ -346,6 +356,7 @@ function Screen(ctx) {
             color: "onSurfaceVariant",
         }),
         title(ctx, "settings", "注入规则"),
+        ...feedback("general"),
         card(ctx, [
             toggle(ctx, "启用环境信息注入", "与输入框菜单中的总开关联动", master.value, value => patch({ masterEnabled: value })),
             divider(ctx),
@@ -359,6 +370,7 @@ function Screen(ctx) {
                     singleLine: true,
                 }),
                 ctx.UI.Text({ text: "允许 3–60 秒，默认 10 秒。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ...feedback("timeout"),
                 ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: () => { saveTimeout(); } }),
             ]),
         ]),
@@ -393,6 +405,7 @@ function Screen(ctx) {
                     singleLine: true,
                 }),
                 ctx.UI.Text({ text: "非空时优先使用自定义名称；留空时读取系统设备名称。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ...feedback("device"),
                 ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: saveDeviceName }),
             ]),
         ]),
@@ -421,20 +434,21 @@ function Screen(ctx) {
                     text: "清除角色卡限制",
                     enabled: boundCharacterCardIds.value.length > 0,
                     fillMaxWidth: true,
-                    onClick: () => patch({ boundCharacterCardIds: [] }),
+                    onClick: () => { patch({ boundCharacterCardIds: [] }); },
                 }),
             ]),
         ]),
         title(ctx, "badge", "名称、地区与生日"),
         card(ctx, [
             ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
-                ctx.UI.TextField({ label: "用户名称", placeholder: "例如：启明", value: userName.value, onValueChange: userName.set, singleLine: true }),
+                ctx.UI.TextField({ label: "用户名称", placeholder: "例如：小明", value: userName.value, onValueChange: userName.set, singleLine: true }),
                 ctx.UI.TextField({ label: "角色名称", placeholder: "单卡绑定时会自动带入，也可手动填写", value: characterName.value, onValueChange: characterName.set, singleLine: true }),
                 ctx.UI.Text({ text: "实际聊天注入优先使用当前活动角色卡名称；无法获取时使用这里的角色名称。Operit 不使用用户或角色宏占位符。", style: "bodySmall", color: "onSurfaceVariant" }),
                 ctx.UI.TextField({ label: "国家/地区代码", placeholder: "CN", value: countryCode.value, onValueChange: countryCode.set, singleLine: true }),
                 ctx.UI.Text({ text: "CN 使用内置 chinese-days；其他两字母代码使用 Nager.Date 公共 API。", style: "bodySmall", color: "onSurfaceVariant" }),
                 ctx.UI.TextField({ label: "用户生日", placeholder: "MM-DD 或 YYYY-MM-DD；留空不注入", value: userBirthday.value, onValueChange: userBirthday.set, singleLine: true }),
                 ctx.UI.TextField({ label: "角色生日", placeholder: "MM-DD 或 YYYY-MM-DD；留空不注入", value: characterBirthday.value, onValueChange: characterBirthday.set, singleLine: true }),
+                ...feedback("identity"),
                 ctx.UI.Button({ text: "保存名称、地区和生日", fillMaxWidth: true, onClick: () => { saveIdentityAndDates(); } }),
             ]),
         ]),
@@ -443,13 +457,23 @@ function Screen(ctx) {
             ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
                 ctx.UI.TextField({ label: "纪念日名称", placeholder: "例如：相识日", value: anniversaryName.value, onValueChange: anniversaryName.set, singleLine: true }),
                 ctx.UI.TextField({ label: "纪念日日期", placeholder: "MM-DD 或 YYYY-MM-DD", value: anniversaryDate.value, onValueChange: anniversaryDate.set, singleLine: true }),
+                ...feedback("anniversary"),
                 ctx.UI.Button({ text: "添加纪念日", fillMaxWidth: true, onClick: addAnniversary }),
                 ...(anniversaries.value.length
-                    ? anniversaries.value.map(event => ctx.UI.Row({ key: `event-${event.id}`, fillMaxWidth: true, verticalAlignment: "center", horizontalArrangement: "spaceBetween" }, [
-                        ctx.UI.Text({ text: `${event.name}｜${event.date}`, style: "bodyMedium", weight: 1 }),
+                    ? anniversaries.value.map(event => ctx.UI.Column({ key: `event-${event.id}`, fillMaxWidth: true, spacing: 8 }, [
+                        ctx.UI.Text({ text: event.name, style: "bodyMedium" }),
+                        ctx.UI.TextField({
+                            label: "已保存的纪念日日期（留空不注入）",
+                            placeholder: "MM-DD 或 YYYY-MM-DD",
+                            value: anniversaryDates.value[event.id] ?? event.date,
+                            onValueChange: value => anniversaryDates.set({ ...anniversaryDates.value, [event.id]: value }),
+                            singleLine: true,
+                        }),
+                        ...feedback(`anniversary-${event.id}`),
+                        ctx.UI.Button({ text: "保存纪念日日期", fillMaxWidth: true, onClick: () => saveAnniversaryDate(event) }),
                         ctx.UI.Button({
                             text: "删除",
-                            onClick: () => patch({ anniversaries: anniversaries.value.filter(item => item.id !== event.id) }),
+                            onClick: () => { patch({ anniversaries: anniversaries.value.filter(item => item.id !== event.id) }, "anniversary", "纪念日已删除，不再注入。"); },
                         }),
                     ]))
                     : [ctx.UI.Text({ text: "尚未添加自定义纪念日。", style: "bodySmall", color: "onSurfaceVariant" })]),
@@ -459,12 +483,12 @@ function Screen(ctx) {
         card(ctx, [
             ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
                 ctx.UI.Text({ text: "用户经期", style: "titleSmall", fontWeight: "bold" }),
-                ctx.UI.TextField({ label: "任意一次已知经期起始日期", placeholder: "YYYY-MM-DD", value: userCycleStartDate.value, onValueChange: userCycleStartDate.set, singleLine: true }),
+                ctx.UI.TextField({ label: "任意一次已知经期起始日期（留空不注入）", placeholder: "YYYY-MM-DD", value: userCycleStartDate.value, onValueChange: userCycleStartDate.set, singleLine: true }),
                 ctx.UI.TextField({ label: "周期时间（天，15–60）", value: userCycleLength.value, onValueChange: userCycleLength.set, singleLine: true }),
                 ctx.UI.TextField({ label: "持续时间（天，1–14）", value: userPeriodDuration.value, onValueChange: userPeriodDuration.set, singleLine: true }),
                 divider(ctx),
                 ctx.UI.Text({ text: "角色经期", style: "titleSmall", fontWeight: "bold" }),
-                ctx.UI.TextField({ label: "任意一次已知经期起始日期", placeholder: "YYYY-MM-DD", value: characterCycleStartDate.value, onValueChange: characterCycleStartDate.set, singleLine: true }),
+                ctx.UI.TextField({ label: "任意一次已知经期起始日期（留空不注入）", placeholder: "YYYY-MM-DD", value: characterCycleStartDate.value, onValueChange: characterCycleStartDate.set, singleLine: true }),
                 ctx.UI.TextField({ label: "周期时间（天，15–60）", value: characterCycleLength.value, onValueChange: characterCycleLength.set, singleLine: true }),
                 ctx.UI.TextField({ label: "持续时间（天，1–14）", value: characterPeriodDuration.value, onValueChange: characterPeriodDuration.set, singleLine: true }),
                 ctx.UI.Text({ text: "经期启用后会注入最近一次经期，以及下次预计月经来潮和结束日期。", style: "bodySmall", color: "onSurfaceVariant" }),
@@ -474,6 +498,7 @@ function Screen(ctx) {
                 radio(ctx, "角色", "按当前或手动角色名称注入", "character", pregnancyOwner.value, value => pregnancyOwner.set(value)),
                 ctx.UI.TextField({ label: "怀孕时间", placeholder: "YYYY-MM-DD；留空不注入", value: pregnancyStartDate.value, onValueChange: pregnancyStartDate.set, singleLine: true }),
                 ctx.UI.Text({ text: "孕期有效时，对应对象不会重复注入经期状态。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ...feedback("wellbeing"),
                 ctx.UI.Button({ text: "保存经期和孕期", fillMaxWidth: true, onClick: () => { saveWellbeing(); } }),
             ]),
         ]),
@@ -494,6 +519,7 @@ function Screen(ctx) {
                     onValueChange: manualAddress.set,
                     singleLine: true,
                 }),
+                ...feedback("address"),
                 ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: () => { saveManualAddress(); } }),
             ]),
         ]));
@@ -540,20 +566,17 @@ function Screen(ctx) {
                 singleLine: true,
             }),
             ctx.UI.Text({ text: "默认 10 分钟；自动模式按当前坐标复用地址解析，移动后自动切换；手动测试会强制刷新。", style: "bodySmall", color: "onSurfaceVariant" }),
+            ...feedback("refresh"),
             ctx.UI.Button({ text: "保存设置", fillMaxWidth: true, onClick: () => { saveRefreshIntervals(); } }),
         ]),
     ]));
     children.push(title(ctx, "visibility", "预览与测试"));
+    children.push(...feedback("preview"));
     children.push(ctx.UI.Row({ fillMaxWidth: true, horizontalArrangement: "spaceBetween" }, [
         ctx.UI.Button({ text: running.value ? "处理中…" : "更新注入预览", enabled: !running.value, weight: 1, onClick: () => runPreview(false) }),
         ctx.UI.Spacer({ width: 10 }),
         ctx.UI.Button({ text: running.value ? "处理中…" : "手动测试", enabled: !running.value, weight: 1, onClick: () => runPreview(true) }),
     ]));
-    if (status.value) {
-        children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: status.value.includes("失败") ? "errorContainer" : "primaryContainer" }, [
-            ctx.UI.Text({ text: status.value, padding: 12, style: "bodyMedium" }),
-        ]));
-    }
     children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: "surface", shape: { cornerRadius: 10 } }, [
         ctx.UI.Column({ padding: 14, spacing: 8 }, [
             ctx.UI.Text({ text: "注入内容预览", style: "titleSmall", fontWeight: "bold" }),
