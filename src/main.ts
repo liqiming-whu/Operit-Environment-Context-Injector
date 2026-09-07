@@ -131,7 +131,7 @@ export function onInputMenuToggle(
   return [{
     id: "environment_context_injection",
     title: "环境信息注入",
-    description: "注入时间、天气、地点、电量和设备信息",
+    description: "注入现实环境、日历、纪念日和角色生理状态",
     isChecked: getInjectionEnabled(),
   }];
 }

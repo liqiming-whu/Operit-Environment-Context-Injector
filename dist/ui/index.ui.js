@@ -62,7 +62,27 @@ function Screen(ctx) {
     const injectLocation = state(ctx, "injectLocation", initial.injectLocation);
     const injectBattery = state(ctx, "injectBattery", initial.injectBattery);
     const injectDevice = state(ctx, "injectDevice", initial.injectDevice);
+    const injectCalendar = state(ctx, "injectCalendar", initial.injectCalendar);
+    const anniversariesEnabled = state(ctx, "anniversariesEnabled", initial.anniversariesEnabled);
+    const cycleEnabled = state(ctx, "cycleEnabled", initial.cycleEnabled);
+    const pregnancyEnabled = state(ctx, "pregnancyEnabled", initial.pregnancyEnabled);
     const customDeviceName = state(ctx, "customDeviceName", initial.customDeviceName);
+    const userName = state(ctx, "userName", initial.userName);
+    const characterName = state(ctx, "characterName", initial.characterName);
+    const countryCode = state(ctx, "countryCode", initial.countryCode);
+    const userBirthday = state(ctx, "userBirthday", initial.userBirthday);
+    const characterBirthday = state(ctx, "characterBirthday", initial.characterBirthday);
+    const anniversaries = state(ctx, "anniversaries", initial.anniversaries);
+    const anniversaryName = state(ctx, "anniversaryName", "");
+    const anniversaryDate = state(ctx, "anniversaryDate", "");
+    const userCycleStartDate = state(ctx, "userCycleStartDate", initial.userCycleStartDate);
+    const userCycleLength = state(ctx, "userCycleLength", String(initial.userCycleLength));
+    const userPeriodDuration = state(ctx, "userPeriodDuration", String(initial.userPeriodDuration));
+    const characterCycleStartDate = state(ctx, "characterCycleStartDate", initial.characterCycleStartDate);
+    const characterCycleLength = state(ctx, "characterCycleLength", String(initial.characterCycleLength));
+    const characterPeriodDuration = state(ctx, "characterPeriodDuration", String(initial.characterPeriodDuration));
+    const pregnancyOwner = state(ctx, "pregnancyOwner", initial.pregnancyOwner);
+    const pregnancyStartDate = state(ctx, "pregnancyStartDate", initial.pregnancyStartDate);
     const boundCharacterCardIds = state(ctx, "boundCharacterCardIds", initial.boundCharacterCardIds);
     const availableCharacterCards = state(ctx, "availableCharacterCards", []);
     const characterCardsLoading = state(ctx, "characterCardsLoading", false);
@@ -86,7 +106,25 @@ function Screen(ctx) {
         injectLocation.set(next.injectLocation);
         injectBattery.set(next.injectBattery);
         injectDevice.set(next.injectDevice);
+        injectCalendar.set(next.injectCalendar);
+        anniversariesEnabled.set(next.anniversariesEnabled);
+        cycleEnabled.set(next.cycleEnabled);
+        pregnancyEnabled.set(next.pregnancyEnabled);
         customDeviceName.set(next.customDeviceName);
+        userName.set(next.userName);
+        characterName.set(next.characterName);
+        countryCode.set(next.countryCode);
+        userBirthday.set(next.userBirthday);
+        characterBirthday.set(next.characterBirthday);
+        anniversaries.set(next.anniversaries);
+        userCycleStartDate.set(next.userCycleStartDate);
+        userCycleLength.set(String(next.userCycleLength));
+        userPeriodDuration.set(String(next.userPeriodDuration));
+        characterCycleStartDate.set(next.characterCycleStartDate);
+        characterCycleLength.set(String(next.characterCycleLength));
+        characterPeriodDuration.set(String(next.characterPeriodDuration));
+        pregnancyOwner.set(next.pregnancyOwner);
+        pregnancyStartDate.set(next.pregnancyStartDate);
         boundCharacterCardIds.set(next.boundCharacterCardIds);
         locationMode.set(next.locationMode);
         manualAddress.set(next.manualAddress);
@@ -103,25 +141,6 @@ function Screen(ctx) {
             status.set(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
-    const current = () => ({
-        masterEnabled: master.value,
-        persistInjectedContent: persist.value,
-        injectionTimeoutSeconds: Number(timeout.value),
-        weatherRefreshIntervalMinutes: Number(weatherRefreshInterval.value),
-        locationRefreshIntervalMinutes: Number(locationRefreshInterval.value),
-        injectTime: injectTime.value,
-        injectWeather: injectWeather.value,
-        injectLocation: injectLocation.value,
-        injectBattery: injectBattery.value,
-        injectDevice: injectDevice.value,
-        customDeviceName: customDeviceName.value,
-        boundCharacterCardIds: boundCharacterCardIds.value,
-        locationMode: locationMode.value,
-        manualAddress: manualAddress.value,
-        usePreciseLocation: precise.value,
-        reverseGeocodingProvider: reverse.value,
-        weatherProvider: weather.value,
-    });
     const saveTimeout = () => {
         const seconds = Number(timeout.value.trim());
         if (!Number.isFinite(seconds) || seconds < 3 || seconds > 60) {
@@ -163,19 +182,135 @@ function Screen(ctx) {
         status.set("设置已保存。");
         return true;
     };
-    const applyPendingTextSettings = () => {
-        if (!saveTimeout())
-            return false;
-        if (locationMode.value === "manual" && !saveManualAddress())
-            return false;
-        saveDeviceName();
-        return true;
-    };
     const toggleBoundCharacterCard = (cardId) => {
         const next = boundCharacterCardIds.value.includes(cardId)
             ? boundCharacterCardIds.value.filter(id => id !== cardId)
             : [...boundCharacterCardIds.value, cardId];
-        patch({ boundCharacterCardIds: next });
+        const selectedCard = next.length === 1 ? availableCharacterCards.value.find(card => card.id === next[0]) : null;
+        patch({
+            boundCharacterCardIds: next,
+            ...(selectedCard?.name ? { characterName: selectedCard.name } : {}),
+        });
+    };
+    const validOptionalDate = (value) => !value.trim() || /^(?:\d{4}-)?\d{2}-\d{2}$/.test(value.trim());
+    const validOptionalFullDate = (value) => !value.trim() || /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+    const saveIdentityAndDates = () => {
+        if (!validOptionalDate(userBirthday.value) || !validOptionalDate(characterBirthday.value)) {
+            status.set("生日必须使用 MM-DD 或 YYYY-MM-DD 格式，或留空。");
+            return false;
+        }
+        if (!/^[A-Za-z]{2}$/.test(countryCode.value.trim())) {
+            status.set("国家/地区代码必须是两个英文字母，例如 CN、US、JP。");
+            return false;
+        }
+        patch({
+            userName: userName.value,
+            characterName: characterName.value,
+            countryCode: countryCode.value.toUpperCase(),
+            userBirthday: userBirthday.value,
+            characterBirthday: characterBirthday.value,
+        });
+        status.set("名称、地区和生日设置已保存。");
+        return true;
+    };
+    const saveWellbeing = () => {
+        if (![userCycleStartDate.value, characterCycleStartDate.value, pregnancyStartDate.value].every(validOptionalFullDate)) {
+            status.set("经期起始日期和怀孕时间必须使用 YYYY-MM-DD 格式，或留空。");
+            return false;
+        }
+        for (const [label, value, min, max] of [
+            ["用户周期", userCycleLength.value, 15, 60], ["用户经期持续", userPeriodDuration.value, 1, 14],
+            ["角色周期", characterCycleLength.value, 15, 60], ["角色经期持续", characterPeriodDuration.value, 1, 14],
+        ]) {
+            const number = Number(value);
+            if (!Number.isFinite(number) || number < min || number > max) {
+                status.set(`${label}必须是 ${min} 至 ${max} 之间的整数。`);
+                return false;
+            }
+        }
+        patch({
+            userCycleStartDate: userCycleStartDate.value,
+            userCycleLength: Number(userCycleLength.value),
+            userPeriodDuration: Number(userPeriodDuration.value),
+            characterCycleStartDate: characterCycleStartDate.value,
+            characterCycleLength: Number(characterCycleLength.value),
+            characterPeriodDuration: Number(characterPeriodDuration.value),
+            pregnancyOwner: pregnancyOwner.value,
+            pregnancyStartDate: pregnancyStartDate.value,
+        });
+        status.set("生理状态设置已保存。");
+        return true;
+    };
+    const addAnniversary = () => {
+        const name = anniversaryName.value.trim();
+        const date = anniversaryDate.value.trim();
+        if (!name || !/^(?:\d{4}-)?\d{2}-\d{2}$/.test(date)) {
+            status.set("请填写纪念日名称，以及 MM-DD 或 YYYY-MM-DD 格式的日期。");
+            return;
+        }
+        const next = [...anniversaries.value, { id: `event-${Date.now()}`, name, date, type: "anniversary" }];
+        patch({ anniversaries: next });
+        anniversaryName.set("");
+        anniversaryDate.set("");
+        status.set("纪念日已添加。");
+    };
+    const applyPendingTextSettings = () => {
+        const seconds = Number(timeout.value.trim());
+        if (!Number.isFinite(seconds) || seconds < 3 || seconds > 60) {
+            status.set("注入超时必须是 3 至 60 秒之间的整数。");
+            return false;
+        }
+        if (locationMode.value === "manual" && !manualAddress.value.trim()) {
+            status.set("手动地址不能为空。");
+            return false;
+        }
+        if (!validOptionalDate(userBirthday.value) || !validOptionalDate(characterBirthday.value)) {
+            status.set("生日必须使用 MM-DD 或 YYYY-MM-DD 格式，或留空。");
+            return false;
+        }
+        if (!/^[A-Za-z]{2}$/.test(countryCode.value.trim())) {
+            status.set("国家/地区代码必须是两个英文字母，例如 CN、US、JP。");
+            return false;
+        }
+        if (![userCycleStartDate.value, characterCycleStartDate.value, pregnancyStartDate.value].every(validOptionalFullDate)) {
+            status.set("经期起始日期和怀孕时间必须使用 YYYY-MM-DD 格式，或留空。");
+            return false;
+        }
+        for (const [label, value, min, max] of [
+            ["用户周期", userCycleLength.value, 15, 60], ["用户经期持续", userPeriodDuration.value, 1, 14],
+            ["角色周期", characterCycleLength.value, 15, 60], ["角色经期持续", characterPeriodDuration.value, 1, 14],
+        ]) {
+            const number = Number(value);
+            if (!Number.isFinite(number) || number < min || number > max) {
+                status.set(`${label}必须是 ${min} 至 ${max} 之间的整数。`);
+                return false;
+            }
+        }
+        try {
+            sync((0, shared_1.saveSettings)({
+                injectionTimeoutSeconds: Math.round(seconds),
+                customDeviceName: customDeviceName.value,
+                manualAddress: manualAddress.value,
+                userName: userName.value,
+                characterName: characterName.value,
+                countryCode: countryCode.value.toUpperCase(),
+                userBirthday: userBirthday.value,
+                characterBirthday: characterBirthday.value,
+                userCycleStartDate: userCycleStartDate.value,
+                userCycleLength: Number(userCycleLength.value),
+                userPeriodDuration: Number(userPeriodDuration.value),
+                characterCycleStartDate: characterCycleStartDate.value,
+                characterCycleLength: Number(characterCycleLength.value),
+                characterPeriodDuration: Number(characterPeriodDuration.value),
+                pregnancyOwner: pregnancyOwner.value,
+                pregnancyStartDate: pregnancyStartDate.value,
+            }));
+            return true;
+        }
+        catch (error) {
+            status.set(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
+            return false;
+        }
     };
     const runPreview = async (manualTest) => {
         if (running.value || !applyPendingTextSettings())
@@ -184,7 +319,7 @@ function Screen(ctx) {
         status.set(manualTest ? "正在手动测试环境采集…" : "正在生成预览…");
         const started = Date.now();
         try {
-            const content = await (0, shared_1.buildEnvironmentPreview)(current(), manualTest);
+            const content = await (0, shared_1.buildEnvironmentPreview)((0, shared_1.loadSettings)(), manualTest);
             preview.set(content || "没有启用任何注入项目。");
             const elapsed = ((Date.now() - started) / 1000).toFixed(1);
             const partial = content.includes("错误:");
@@ -206,7 +341,7 @@ function Screen(ctx) {
             ctx.UI.Text({ text: "环境信息注入", style: "headlineSmall", fontWeight: "bold" }),
         ]),
         ctx.UI.Text({
-            text: "仅注入时间、天气、地点、电量和设备信息。网络或权限失败会显示错误行，不阻塞消息发送。",
+            text: "注入现实环境、日历、生日与纪念日、经期和孕期信息。使用普通名称字段，不依赖宏占位符；网络或权限失败不会阻塞消息发送。",
             style: "bodyMedium",
             color: "onSurfaceVariant",
         }),
@@ -238,6 +373,14 @@ function Screen(ctx) {
             toggle(ctx, "电量", "电池百分比与充电状态", injectBattery.value, value => patch({ injectBattery: value })),
             divider(ctx),
             toggle(ctx, "设备信息", "设备名称、型号和 Android 版本", injectDevice.value, value => patch({ injectDevice: value })),
+            divider(ctx),
+            toggle(ctx, "日历", "星期、工作日/节假日、农历和下个节假日", injectCalendar.value, value => patch({ injectCalendar: value })),
+            divider(ctx),
+            toggle(ctx, "生日和纪念日", "用户、角色生日与自定义纪念日", anniversariesEnabled.value, value => patch({ anniversariesEnabled: value })),
+            divider(ctx),
+            toggle(ctx, "经期", "分别推算用户和角色的最近及下次经期", cycleEnabled.value, value => patch({ cycleEnabled: value })),
+            divider(ctx),
+            toggle(ctx, "孕期", "按怀孕时间计算孕周、阶段和预产期", pregnancyEnabled.value, value => patch({ pregnancyEnabled: value })),
         ]),
         title(ctx, "devices", "设备名称"),
         card(ctx, [
@@ -280,6 +423,58 @@ function Screen(ctx) {
                     fillMaxWidth: true,
                     onClick: () => patch({ boundCharacterCardIds: [] }),
                 }),
+            ]),
+        ]),
+        title(ctx, "badge", "名称、地区与生日"),
+        card(ctx, [
+            ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+                ctx.UI.TextField({ label: "用户名称", placeholder: "例如：启明", value: userName.value, onValueChange: userName.set, singleLine: true }),
+                ctx.UI.TextField({ label: "角色名称", placeholder: "单卡绑定时会自动带入，也可手动填写", value: characterName.value, onValueChange: characterName.set, singleLine: true }),
+                ctx.UI.Text({ text: "实际聊天注入优先使用当前活动角色卡名称；无法获取时使用这里的角色名称。Operit 不使用用户或角色宏占位符。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ctx.UI.TextField({ label: "国家/地区代码", placeholder: "CN", value: countryCode.value, onValueChange: countryCode.set, singleLine: true }),
+                ctx.UI.Text({ text: "CN 使用内置 chinese-days；其他两字母代码使用 Nager.Date 公共 API。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ctx.UI.TextField({ label: "用户生日", placeholder: "MM-DD 或 YYYY-MM-DD；留空不注入", value: userBirthday.value, onValueChange: userBirthday.set, singleLine: true }),
+                ctx.UI.TextField({ label: "角色生日", placeholder: "MM-DD 或 YYYY-MM-DD；留空不注入", value: characterBirthday.value, onValueChange: characterBirthday.set, singleLine: true }),
+                ctx.UI.Button({ text: "保存名称、地区和生日", fillMaxWidth: true, onClick: () => { saveIdentityAndDates(); } }),
+            ]),
+        ]),
+        title(ctx, "event", "自定义纪念日"),
+        card(ctx, [
+            ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+                ctx.UI.TextField({ label: "纪念日名称", placeholder: "例如：相识日", value: anniversaryName.value, onValueChange: anniversaryName.set, singleLine: true }),
+                ctx.UI.TextField({ label: "纪念日日期", placeholder: "MM-DD 或 YYYY-MM-DD", value: anniversaryDate.value, onValueChange: anniversaryDate.set, singleLine: true }),
+                ctx.UI.Button({ text: "添加纪念日", fillMaxWidth: true, onClick: addAnniversary }),
+                ...(anniversaries.value.length
+                    ? anniversaries.value.map(event => ctx.UI.Row({ key: `event-${event.id}`, fillMaxWidth: true, verticalAlignment: "center", horizontalArrangement: "spaceBetween" }, [
+                        ctx.UI.Text({ text: `${event.name}｜${event.date}`, style: "bodyMedium", weight: 1 }),
+                        ctx.UI.Button({
+                            text: "删除",
+                            onClick: () => patch({ anniversaries: anniversaries.value.filter(item => item.id !== event.id) }),
+                        }),
+                    ]))
+                    : [ctx.UI.Text({ text: "尚未添加自定义纪念日。", style: "bodySmall", color: "onSurfaceVariant" })]),
+            ]),
+        ]),
+        title(ctx, "favorite", "经期与孕期"),
+        card(ctx, [
+            ctx.UI.Column({ padding: { horizontal: 14, vertical: 12 }, spacing: 8 }, [
+                ctx.UI.Text({ text: "用户经期", style: "titleSmall", fontWeight: "bold" }),
+                ctx.UI.TextField({ label: "任意一次已知经期起始日期", placeholder: "YYYY-MM-DD", value: userCycleStartDate.value, onValueChange: userCycleStartDate.set, singleLine: true }),
+                ctx.UI.TextField({ label: "周期时间（天，15–60）", value: userCycleLength.value, onValueChange: userCycleLength.set, singleLine: true }),
+                ctx.UI.TextField({ label: "持续时间（天，1–14）", value: userPeriodDuration.value, onValueChange: userPeriodDuration.set, singleLine: true }),
+                divider(ctx),
+                ctx.UI.Text({ text: "角色经期", style: "titleSmall", fontWeight: "bold" }),
+                ctx.UI.TextField({ label: "任意一次已知经期起始日期", placeholder: "YYYY-MM-DD", value: characterCycleStartDate.value, onValueChange: characterCycleStartDate.set, singleLine: true }),
+                ctx.UI.TextField({ label: "周期时间（天，15–60）", value: characterCycleLength.value, onValueChange: characterCycleLength.set, singleLine: true }),
+                ctx.UI.TextField({ label: "持续时间（天，1–14）", value: characterPeriodDuration.value, onValueChange: characterPeriodDuration.set, singleLine: true }),
+                ctx.UI.Text({ text: "经期启用后会注入最近一次经期，以及下次预计月经来潮和结束日期。", style: "bodySmall", color: "onSurfaceVariant" }),
+                divider(ctx),
+                ctx.UI.Text({ text: "孕期对象", style: "titleSmall", fontWeight: "bold" }),
+                radio(ctx, "用户", "按用户名称注入", "user", pregnancyOwner.value, value => pregnancyOwner.set(value)),
+                radio(ctx, "角色", "按当前或手动角色名称注入", "character", pregnancyOwner.value, value => pregnancyOwner.set(value)),
+                ctx.UI.TextField({ label: "怀孕时间", placeholder: "YYYY-MM-DD；留空不注入", value: pregnancyStartDate.value, onValueChange: pregnancyStartDate.set, singleLine: true }),
+                ctx.UI.Text({ text: "孕期有效时，对应对象不会重复注入经期状态。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ctx.UI.Button({ text: "保存经期和孕期", fillMaxWidth: true, onClick: () => { saveWellbeing(); } }),
             ]),
         ]),
         title(ctx, "locationOn", "地点来源"),
@@ -368,7 +563,7 @@ function Screen(ctx) {
     children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: "secondaryContainer" }, [
         ctx.UI.Text({
             padding: 12,
-            text: `${master.value ? "已启用" : "已关闭"}；${persist.value ? "随消息保存" : "仅临时发给模型"}；角色卡：${boundCharacterCardIds.value.length ? `限定 ${boundCharacterCardIds.value.length} 张` : "不限制"}；设备名：${customDeviceName.value.trim() || "系统名称"}；地点：${locationMode.value === "auto" ? "自动定位" : manualAddress.value || "未填写"}；天气：${weather.value}。`,
+            text: `${master.value ? "已启用" : "已关闭"}；${persist.value ? "随消息保存" : "仅临时发给模型"}；角色卡：${boundCharacterCardIds.value.length ? `限定 ${boundCharacterCardIds.value.length} 张` : "不限制"}；名称：${userName.value || "用户"}/${characterName.value || "角色"}；日历：${injectCalendar.value ? countryCode.value || "CN" : "关闭"}；纪念日：${anniversariesEnabled.value ? `${anniversaries.value.length} 个自定义` : "关闭"}；经期：${cycleEnabled.value ? "开启" : "关闭"}；孕期：${pregnancyEnabled.value ? "开启" : "关闭"}；设备名：${customDeviceName.value.trim() || "系统名称"}；地点：${locationMode.value === "auto" ? "自动定位" : manualAddress.value || "未填写"}；天气：${weather.value}。`,
             style: "bodySmall",
             color: "onSecondaryContainer",
         }),

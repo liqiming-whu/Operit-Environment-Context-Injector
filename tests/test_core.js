@@ -10,7 +10,7 @@ let weatherRequests = 0;
 let currentLocation = { latitude: 30.6, longitude: 114.1, accuracy: 30, provider: 'network' };
 const weatherProviderRequests = [];
 class MockDate { constructor(v) { this.v = v; } }
-class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'EEEE' ? '星期三' : '2026-08-19 12:00:00'; } }
+class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'EEEE' ? '星期三' : this.fmt === 'yyyy-MM-dd' ? '2026-08-19' : '2026-08-19 12:00:00'; } }
 const prefs = {
   getString: (key, fallback) => stored.has(key) ? stored.get(key) : fallback,
   edit: () => ({ putString: (key, value) => ({ apply: () => { stored.set(key, value); } }) }),
@@ -38,6 +38,12 @@ global.Tools = {
   Chat: { listCharacterCards: async () => ({ cards: [{ id: 'card-b', name: '乙' }, { id: 'card-a', name: '甲' }] }) },
   System: { getLocation: async () => { locationRequests += 1; return { ...currentLocation, timestamp: Date.now() }; } },
   Net: { http: async ({ url }) => {
+    if (url.includes('date.nager.at')) {
+      const year = Number((url.match(/PublicHolidays\/(\d{4})\//) || [])[1]);
+      return { statusCode: 200, content: JSON.stringify(year === 2026
+        ? [{ date: '2026-12-25', name: 'Christmas Day', localName: 'Christmas Day' }]
+        : [{ date: '2027-01-01', name: 'New Year', localName: 'New Year' }]) };
+    }
     if (url.includes('geocoding-api')) {
       geocodingRequests += 1;
       if (failGeocoding) throw new Error('mock geocoding failure');
@@ -84,6 +90,7 @@ global.ToolPkg = {
     manualAddress: '武汉',
     customDeviceName: '启明的手机',
     boundCharacterCardIds: ['card-a', 'card-b', 'card-a'],
+    injectCalendar: false,
   });
   assert.deepEqual(settings.boundCharacterCardIds, ['card-a', 'card-b']);
   assert.equal(settings.weatherRefreshIntervalMinutes, 30);
@@ -170,6 +177,41 @@ global.ToolPkg = {
   assert.equal(reverseGeocodingRequests, 2);
   assert.equal(weatherRequests, 9);
 
+  const wellbeingSettings = {
+    ...settings,
+    injectTime: false, injectWeather: false, injectLocation: false, injectBattery: false, injectDevice: false,
+    injectCalendar: true, countryCode: 'CN', anniversariesEnabled: true,
+    userName: '启明', characterName: '手动角色', userBirthday: '1997-08-20', characterBirthday: '08-21',
+    anniversaries: [{ id: 'met', name: '相识日', date: '2020-08-22', type: 'anniversary' }],
+    cycleEnabled: true,
+    userCycleStartDate: '2026-08-01', userCycleLength: 28, userPeriodDuration: 5,
+    characterCycleStartDate: '2026-08-03', characterCycleLength: 30, characterPeriodDuration: 6,
+    pregnancyEnabled: true, pregnancyOwner: 'character', pregnancyStartDate: '2026-06-01',
+  };
+  const wellbeingPreview = await shared.buildEnvironmentContent(wellbeingSettings, false, '活动角色');
+  for (const text of ['【现实环境信息】', '日历来源: chinese-days', '农历:', '【生日和纪念日】', '启明的生日', '活动角色的生日', '相识日', '【角色生理状态】', '启明:', '下次预计月经来潮', '活动角色: 孕']) assert(wellbeingPreview.includes(text), text);
+  assert(!wellbeingPreview.includes('手动角色'));
+  assert(!wellbeingPreview.includes('{{user}}'));
+  assert(!wellbeingPreview.includes('{{char}}'));
+  const internationalPreview = await shared.buildEnvironmentContent({
+    ...wellbeingSettings, countryCode: 'US', anniversariesEnabled: false, cycleEnabled: false, pregnancyEnabled: false,
+  });
+  assert(internationalPreview.includes('日历来源: Nager.Date'));
+  assert(internationalPreview.includes('下个节假日: Christmas Day 2026-12-25'));
+  const normalizedWellbeing = shared.saveSettings({
+    userName: '  启明  ', characterName: '  角色甲  ', countryCode: 'us', userBirthday: 'invalid', characterBirthday: '08-21',
+    userCycleLength: 100, characterPeriodDuration: 0, pregnancyOwner: 'character',
+    anniversaries: [{ id: 'x', name: '纪念', date: '08-22', type: 'anniversary' }, { id: 'y', name: '', date: '08-23', type: 'anniversary' }],
+  });
+  assert.equal(normalizedWellbeing.userName, '启明');
+  assert.equal(normalizedWellbeing.characterName, '角色甲');
+  assert.equal(normalizedWellbeing.countryCode, 'US');
+  assert.equal(normalizedWellbeing.userBirthday, '');
+  assert.equal(normalizedWellbeing.userCycleLength, 60);
+  assert.equal(normalizedWellbeing.characterPeriodDuration, 1);
+  assert.equal(normalizedWellbeing.pregnancyOwner, 'character');
+  assert.equal(normalizedWellbeing.anniversaries.length, 1);
+
   const compiledSharedSource = require('fs').readFileSync(require.resolve('../dist/shared.js'), 'utf8');
   assert(!compiledSharedSource.includes('formatCoordinates'));
   assert(!compiledSharedSource.includes('location.label || formatCoordinates'));
@@ -178,6 +220,14 @@ global.ToolPkg = {
   assert.equal(await shared.appendEnvironmentToMessage('测试', { type: 'character_card', id: 'other', name: '其他' }), null);
   const matched = await shared.appendEnvironmentToMessage('测试', { type: 'character_card', id: 'card-a', name: '甲' });
   assert(matched.includes('Environment:'));
+  assert(matched.includes('甲的生日'));
+  assert(!matched.includes('{{user}}'));
+  assert(!matched.includes('{{char}}'));
+  shared.saveSettings({ boundCharacterCardIds: [] });
+  const nonCharacterPrompt = await shared.appendEnvironmentToMessage('测试', { type: 'system_prompt', id: 'system-a', name: '系统提示名称' });
+  assert(nonCharacterPrompt.includes('角色甲的生日'));
+  assert(!nonCharacterPrompt.includes('系统提示名称'));
+  shared.saveSettings({ boundCharacterCardIds: settings.boundCharacterCardIds });
   const cards = await shared.listCharacterCards();
   assert.deepEqual(cards.map(x => x.id).sort(), ['card-a', 'card-b']);
   assert.equal(main.registerToolPkg(), true);
@@ -190,7 +240,7 @@ global.ToolPkg = {
   const ctx = { UI, useState: (key, initial) => { if (!states.has(key)) states.set(key, initial); return [states.get(key), value => states.set(key, value)]; } };
   const tree = registrations.ui[0].screen(ctx);
   let text = JSON.stringify(tree);
-  for (const label of ['自定义设备名称', '绑定角色卡', '清除角色卡限制', '按 Open-Meteo → MET Norway → wttr.in 顺序容错', 'OpenStreetMap 反向地址服务(支持简体中文，无代理可能失败)', '免密钥反向地址服务（支持繁体中文）', '基于 OpenStreetMap的反向地址服务(不支持中文)']) assert(text.includes(label), label);
+  for (const label of ['自定义设备名称', '绑定角色卡', '清除角色卡限制', '用户名称', '角色名称', '国家/地区代码', '用户生日', '角色生日', '自定义纪念日', '添加纪念日', '用户经期', '角色经期', '怀孕时间', '下次预计月经来潮和结束日期', '不使用用户或角色宏占位符', '按 Open-Meteo → MET Norway → wttr.in 顺序容错', 'OpenStreetMap 反向地址服务(支持简体中文，无代理可能失败)', '免密钥反向地址服务（支持繁体中文）', '基于 OpenStreetMap的反向地址服务(不支持中文)']) assert(text.includes(label), label);
   await tree.props.onLoad();
   const loadedTree = registrations.ui[0].screen(ctx);
   text = JSON.stringify(loadedTree);
@@ -218,5 +268,5 @@ global.ToolPkg = {
   assert(!text.includes('保存超时和地址'));
   assert(!text.includes('修改后点击'));
   assert.equal(states.get('characterCardsLoading'), false);
-  console.log('ENV_INJECTOR_V131_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
+  console.log('ENV_INJECTOR_V200_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
 })().catch(error => { console.error(error); process.exitCode = 1; });

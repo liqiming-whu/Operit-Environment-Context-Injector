@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.environment_context_injector",
-  "version": "1.3.2",
+  "version": "2.0.0",
   "main": "dist/main.js",
   "display_name": {
     "zh": "环境信息注入",
     "en": "Environment Context Injection"
   },
   "description": {
-    "zh": "在发送消息时注入时间、天气、地点、电量和设备信息，支持手动/自动地点、多地址解析与多天气源。",
-    "en": "Inject time, weather, location, battery, and device information with configurable location, geocoding, and weather providers."
+    "zh": "在发送消息时注入现实环境、日历、生日与纪念日、经期和孕期信息，支持角色卡绑定与手动名称。",
+    "en": "Inject environment, calendar, anniversary, menstrual cycle, and pregnancy context with character-card binding and manual names."
   },
   "enabled_by_default": false,
   "subpackages": []

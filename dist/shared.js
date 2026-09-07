@@ -18,6 +18,8 @@ const LOCATION_CACHE_KEY = "environment_context_location_cache";
 const WEATHER_CACHE_KEY = "environment_context_weather_cache";
 const ATTACHMENT_ID_PREFIX = "environment_context_bundle_";
 const ATTACHMENT_FILE_PREFIX = "Environment:";
+const calendar_1 = require("./calendar");
+const wellbeing_1 = require("./wellbeing");
 exports.DEFAULT_SETTINGS = {
     masterEnabled: false,
     persistInjectedContent: true,
@@ -29,7 +31,25 @@ exports.DEFAULT_SETTINGS = {
     injectLocation: true,
     injectBattery: true,
     injectDevice: true,
+    injectCalendar: true,
+    anniversariesEnabled: true,
+    cycleEnabled: false,
+    pregnancyEnabled: false,
     customDeviceName: "",
+    userName: "用户",
+    characterName: "角色",
+    countryCode: "CN",
+    userBirthday: "",
+    characterBirthday: "",
+    anniversaries: [],
+    userCycleStartDate: "",
+    userCycleLength: 28,
+    userPeriodDuration: 5,
+    characterCycleStartDate: "",
+    characterCycleLength: 28,
+    characterPeriodDuration: 5,
+    pregnancyOwner: "user",
+    pregnancyStartDate: "",
     boundCharacterCardIds: [],
     locationMode: "auto",
     manualAddress: "武汉",
@@ -61,6 +81,22 @@ function clean(value, max = 160) {
         .trim()
         .slice(0, max);
 }
+function normalizeDateInput(value) {
+    const text = String(value || "").trim();
+    return /^(?:\d{4}-)?\d{2}-\d{2}$/.test(text) ? text : "";
+}
+function normalizeFullDate(value) {
+    const text = String(value || "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+function sanitizeAnniversaries(value) {
+    return (Array.isArray(value) ? value : []).map((event, index) => ({
+        id: clean(event?.id || `event-${index}`, 80),
+        name: clean(event?.name, 80),
+        date: normalizeDateInput(event?.date),
+        type: event?.type === "birthday" ? "birthday" : "anniversary",
+    })).filter(event => event.name && event.date).slice(0, 100);
+}
 function sanitizeSettings(input) {
     const locationMode = input?.locationMode === "manual" ? "manual" : "auto";
     const reverse = String(input?.reverseGeocodingProvider || "");
@@ -76,7 +112,25 @@ function sanitizeSettings(input) {
         injectLocation: Boolean(input?.injectLocation ?? exports.DEFAULT_SETTINGS.injectLocation),
         injectBattery: Boolean(input?.injectBattery ?? exports.DEFAULT_SETTINGS.injectBattery),
         injectDevice: Boolean(input?.injectDevice ?? exports.DEFAULT_SETTINGS.injectDevice),
+        injectCalendar: Boolean(input?.injectCalendar ?? exports.DEFAULT_SETTINGS.injectCalendar),
+        anniversariesEnabled: Boolean(input?.anniversariesEnabled ?? exports.DEFAULT_SETTINGS.anniversariesEnabled),
+        cycleEnabled: Boolean(input?.cycleEnabled ?? exports.DEFAULT_SETTINGS.cycleEnabled),
+        pregnancyEnabled: Boolean(input?.pregnancyEnabled ?? exports.DEFAULT_SETTINGS.pregnancyEnabled),
         customDeviceName: clean(input?.customDeviceName ?? exports.DEFAULT_SETTINGS.customDeviceName, 80),
+        userName: clean(input?.userName ?? exports.DEFAULT_SETTINGS.userName, 80) || exports.DEFAULT_SETTINGS.userName,
+        characterName: clean(input?.characterName ?? exports.DEFAULT_SETTINGS.characterName, 80) || exports.DEFAULT_SETTINGS.characterName,
+        countryCode: /^[A-Z]{2}$/.test(String(input?.countryCode || "").toUpperCase()) ? String(input?.countryCode).toUpperCase() : exports.DEFAULT_SETTINGS.countryCode,
+        userBirthday: normalizeDateInput(input?.userBirthday),
+        characterBirthday: normalizeDateInput(input?.characterBirthday),
+        anniversaries: sanitizeAnniversaries(input?.anniversaries),
+        userCycleStartDate: normalizeFullDate(input?.userCycleStartDate),
+        userCycleLength: clampInteger(input?.userCycleLength, 15, 60, 28),
+        userPeriodDuration: clampInteger(input?.userPeriodDuration, 1, 14, 5),
+        characterCycleStartDate: normalizeFullDate(input?.characterCycleStartDate),
+        characterCycleLength: clampInteger(input?.characterCycleLength, 15, 60, 28),
+        characterPeriodDuration: clampInteger(input?.characterPeriodDuration, 1, 14, 5),
+        pregnancyOwner: input?.pregnancyOwner === "character" ? "character" : "user",
+        pregnancyStartDate: normalizeFullDate(input?.pregnancyStartDate),
         boundCharacterCardIds: Array.from(new Set((Array.isArray(input?.boundCharacterCardIds) ? input.boundCharacterCardIds : [])
             .map(id => clean(id, 120)).filter(Boolean))).slice(0, 100),
         locationMode,
@@ -496,10 +550,64 @@ function weatherBlock(weather, location) {
         ...(weather.fallback ? [`天气容错: ${weather.fallback}`] : []),
     ].join("\n");
 }
-async function buildEnvironmentContent(settingsInput, forceRefresh = false) {
+function currentDateString() {
+    const SimpleDateFormat = Java.type("java.text.SimpleDateFormat");
+    const DateClass = Java.type("java.util.Date");
+    const LocaleClass = Java.type("java.util.Locale");
+    return String(new SimpleDateFormat("yyyy-MM-dd", LocaleClass.getDefault()).format(new DateClass()));
+}
+function calendarBlock(calendar) {
+    return [
+        `日历: 星期${calendar.weekDayName}｜${calendar.dayType}`,
+        ...(calendar.holidayName ? [`今日节假日: ${calendar.holidayName}`] : []),
+        ...(calendar.lunarDate ? [`农历: ${calendar.lunarDate}`] : []),
+        ...(calendar.nextHoliday ? [`下个节假日: ${calendar.nextHoliday.name} ${calendar.nextHoliday.date}（还有${calendar.nextHoliday.daysUntil}天）`] : []),
+        `日历来源: ${calendar.source}`,
+    ].join("\n");
+}
+function anniversariesBlock(settings, today, userLabel, characterLabel) {
+    if (!settings.anniversariesEnabled)
+        return "";
+    const events = (0, wellbeing_1.collectAnniversaries)(settings, today, userLabel, characterLabel);
+    if (!events.length)
+        return "";
+    return [
+        "【生日和纪念日】",
+        ...events.map(event => {
+            if (event.isToday) {
+                const suffix = event.years === null ? "" : event.type === "birthday" ? `（${event.years}岁）` : `（第${event.years}年）`;
+                return `- 今天是${event.name}${suffix}`;
+            }
+            const suffix = event.years === null ? "" : event.type === "birthday" ? `，届时${event.years}岁` : `，届时第${event.years}年`;
+            return `- ${event.name}，日期${event.date}，下次${event.nextDate}（还有${event.daysUntil}天${suffix}）`;
+        }),
+    ].join("\n");
+}
+function wellbeingBlock(settings, today, userLabel, characterLabel) {
+    const lines = [];
+    const pregnancy = settings.pregnancyEnabled ? (0, wellbeing_1.calculatePregnancyStatus)(settings.pregnancyStartDate, today) : null;
+    const pregnantOwner = pregnancy ? settings.pregnancyOwner : null;
+    if (settings.cycleEnabled) {
+        for (const entry of (0, wellbeing_1.collectCycleStatuses)(settings, today, userLabel, characterLabel)) {
+            if (entry.owner === pregnantOwner)
+                continue;
+            lines.push(`- ${entry.label}: ${entry.status.description}；最近一次经期 ${entry.status.recentStartDate} 至 ${entry.status.recentEndDate}；下次预计月经来潮 ${entry.status.nextStartDate}；下次预计月经结束 ${entry.status.nextEndDate}`);
+        }
+    }
+    if (pregnancy) {
+        const label = settings.pregnancyOwner === "character" ? characterLabel : userLabel;
+        lines.push(`- ${label}: 孕${pregnancy.week}周，第${pregnancy.trimester}孕期；${pregnancy.statusText}；预产期 ${pregnancy.dueDate}`);
+    }
+    return lines.length ? ["【角色生理状态】", ...lines].join("\n") : "";
+}
+async function buildEnvironmentContent(settingsInput, forceRefresh = false, activeCharacterName = "") {
     const settings = sanitizeSettings(settingsInput || loadSettings());
     const deadlineMs = Date.now() + settings.injectionTimeoutSeconds * 1000;
+    const today = currentDateString();
+    const userLabel = settings.userName || "用户";
+    const characterLabel = clean(activeCharacterName, 80) || settings.characterName || "角色";
     const timeContent = settings.injectTime ? buildTimeBlock() : "";
+    let calendarContent = "";
     let weatherContent = "";
     let locationContent = "";
     let batteryContent = "";
@@ -544,9 +652,23 @@ async function buildEnvironmentContent(settingsInput, forceRefresh = false) {
         if (settings.injectLocation)
             locationContent = locationBlock(location);
     }
-    return [timeContent, weatherContent, locationContent, batteryContent, deviceContent]
-        .filter(content => content.trim())
-        .join("\n\n");
+    if (settings.injectCalendar) {
+        try {
+            const calendar = await (0, calendar_1.getCalendarContext)(today, settings.countryCode, url => httpJson(url, deadlineMs, 8));
+            calendarContent = calendarBlock(calendar);
+        }
+        catch (error) {
+            calendarContent = `日历错误: ${clean(error instanceof Error ? error.message : error, 240)}`;
+        }
+    }
+    const realityDetails = [timeContent, calendarContent, weatherContent, locationContent, batteryContent, deviceContent]
+        .filter(content => content.trim());
+    const realityBlock = realityDetails.length ? ["【现实环境信息】", ...realityDetails].join("\n\n") : "";
+    return [
+        realityBlock,
+        anniversariesBlock(settings, today, userLabel, characterLabel),
+        wellbeingBlock(settings, today, userLabel, characterLabel),
+    ].filter(content => content.trim()).join("\n\n");
 }
 async function buildEnvironmentPreview(settingsInput, forceRefresh = false) {
     return buildEnvironmentContent(settingsInput || loadSettings(), forceRefresh);
@@ -580,7 +702,8 @@ async function appendEnvironmentToMessage(messageText, activePrompt) {
     const settings = loadSettings();
     if (!settings.masterEnabled || !matchesBoundCharacterCard(settings, activePrompt) || !input.trim() || containsEnvironmentAttachment(input))
         return null;
-    const content = await buildEnvironmentContent(settings);
+    const activeCharacterName = activePrompt?.type === "character_card" ? clean(activePrompt.name, 80) : "";
+    const content = await buildEnvironmentContent(settings, false, activeCharacterName);
     if (!content.trim())
         return null;
     return `${input.replace(/\s+$/, "")} ${buildAttachment(content)}`.trim();
