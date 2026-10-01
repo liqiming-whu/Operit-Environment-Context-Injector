@@ -1,7 +1,5 @@
 # Operit Environment Context Injector
 
-[![Linux.do](https://img.shields.io/badge/Linux.do-Community-00A67D?style=flat-square)](https://linux.do)
-
 Operit ToolPkg 环境信息注入插件。基于官方 `examples/message_insert` 的 Prompt Hook、显性附件、输入菜单开关与 Compose DSL 设置页实现。
 
 ## 日期清空与保存反馈（v2.0.1）
@@ -130,3 +128,6 @@ v2.0.0 自动测试进一步覆盖：设置迁移和校验、中国 chinese-days
 第三方组件：`chinese-days` 1.5.9，MIT License；许可证见 `vendor/chinese-days.LICENSE`。
 
 测试设备为 Android 16；实际定位精度、地址语言和第三方天气服务可用性由设备权限、网络和供应商响应决定。更新 UI 后需重启 Operit 再做最终交互回归。
+
+## 友情链接
+[Linux.Do](https://linux.do/) — 新的理想型社区
