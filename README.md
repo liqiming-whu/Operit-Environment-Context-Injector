@@ -1,5 +1,7 @@
 # Operit Environment Context Injector
 
+[![Linux.do](https://img.shields.io/badge/Linux.do-Community-00A67D?style=flat-square)](https://linux.do)
+
 Operit ToolPkg 环境信息注入插件。基于官方 `examples/message_insert` 的 Prompt Hook、显性附件、输入菜单开关与 Compose DSL 设置页实现。
 
 ## 日期清空与保存反馈（v2.0.1）
