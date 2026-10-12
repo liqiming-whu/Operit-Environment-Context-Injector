@@ -10,7 +10,7 @@ let weatherRequests = 0;
 let currentLocation = { latitude: 30.6, longitude: 114.1, accuracy: 30, provider: 'network' };
 const weatherProviderRequests = [];
 class MockDate { constructor(v) { this.v = v; } }
-class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'EEEE' ? '星期三' : this.fmt === 'yyyy-MM-dd' ? '2026-08-19' : '2026-08-19 12:00:00'; } }
+class MockSdf { constructor(fmt) { this.fmt = fmt; } format() { return this.fmt === 'HH:mm:ss' ? '12:00:00' : this.fmt === 'EEEE' ? '星期三' : this.fmt === 'yyyy-MM-dd' ? '2026-08-19' : '2026-08-19 12:00:00'; } }
 const prefs = {
   getString: (key, fallback) => stored.has(key) ? stored.get(key) : fallback,
   edit: () => ({ putString: (key, value) => ({ apply: () => { stored.set(key, value); } }) }),
@@ -84,6 +84,33 @@ global.ToolPkg = {
 (async () => {
   const shared = require('../dist/shared.js');
   const main = require('../dist/main.js');
+  const settingsKey = 'environment_context_injector_settings';
+  for (const enabled of [false, true]) {
+    stored.set(settingsKey, JSON.stringify({ injectTime: enabled }));
+    assert.equal(shared.loadSettings().injectDate, enabled);
+    shared.saveSettings({ injectTime: !enabled });
+    assert.equal(shared.loadSettings().injectDate, enabled);
+  }
+  stored.clear();
+  assert.equal(shared.loadSettings().injectDate, true);
+  for (const injectTime of [false, true]) for (const injectDate of [false, true]) {
+    const settings = shared.saveSettings({ masterEnabled: true, injectTime, injectDate,
+      injectCalendar: false, injectWeather: false, injectLocation: false,
+      injectBattery: false, injectDevice: false, anniversariesEnabled: false });
+    const content = await shared.buildEnvironmentPreview(settings);
+    assert.equal(content.includes('【当前时间】'), injectTime);
+    assert.equal(content.includes('12:00:00'), injectTime);
+    assert.equal(content.includes('时区: Asia/Shanghai'), injectTime);
+    assert.equal(content.includes('【当前日期】'), injectDate);
+    assert.equal(content.includes('2026-08-19'), injectDate);
+    assert.equal(content.includes('星期: 星期三'), injectDate);
+    assert.equal(shared.loadSettings().injectDate, injectDate);
+    assert.equal(shared.loadSettings().injectTime, injectTime);
+    if (!injectTime && !injectDate) assert.equal(content, '');
+  }
+  stored.clear();
+  console.log('TIME_DATE_SPLIT_AND_MIGRATION_PASS');
+
   const settings = shared.saveSettings({
     masterEnabled: true,
     locationMode: 'manual',
@@ -98,11 +125,11 @@ global.ToolPkg = {
   const preview = await shared.buildEnvironmentPreview(settings);
   assert(preview.includes('设备名称: 启明的手机'));
   assert(!preview.includes('设备名称: V2505A'));
-  const headings = ['【当前时间】', '【当前天气】', '【当前位置】', '【当前电量】', '【设备信息】'];
+  const headings = ['【当前时间】', '【当前日期】', '【当前天气】', '【当前位置】', '【当前电量】', '【设备信息】'];
   const positions = headings.map(heading => preview.indexOf(heading));
   assert(positions.every(position => position >= 0));
   assert(positions.every((position, index) => index === 0 || position > positions[index - 1]));
-  const locationSection = preview.slice(positions[2], positions[3]);
+  const locationSection = preview.slice(positions[3], positions[4]);
   assert(!locationSection.includes('坐标:'));
   assert(!locationSection.includes('时间:'));
   assert.equal(geocodingRequests, 1);
@@ -119,8 +146,8 @@ global.ToolPkg = {
   const failedPositions = headings.map(heading => failedPreview.indexOf(heading));
   assert(failedPositions.every(position => position >= 0));
   assert(failedPositions.every((position, index) => index === 0 || position > failedPositions[index - 1]));
-  assert(failedPreview.slice(failedPositions[1], failedPositions[2]).includes('错误:'));
   assert(failedPreview.slice(failedPositions[2], failedPositions[3]).includes('错误:'));
+  assert(failedPreview.slice(failedPositions[3], failedPositions[4]).includes('错误:'));
   const refreshedPreview = await shared.buildEnvironmentPreview(settings, true);
   assert(refreshedPreview.includes('天气: 阴'));
   assert.equal(geocodingRequests, 3);
@@ -179,7 +206,7 @@ global.ToolPkg = {
 
   const wellbeingSettings = {
     ...settings,
-    injectTime: false, injectWeather: false, injectLocation: false, injectBattery: false, injectDevice: false,
+    injectTime: false, injectDate: false, injectWeather: false, injectLocation: false, injectBattery: false, injectDevice: false,
     injectCalendar: true, countryCode: 'CN', anniversariesEnabled: true,
     userName: '启明', characterName: '手动角色', userBirthday: '1997-08-20', characterBirthday: '08-21',
     anniversaries: [{ id: 'met', name: '相识日', date: '2020-08-22', type: 'anniversary' }],
@@ -275,6 +302,21 @@ global.ToolPkg = {
     const walk = n => { if (!n || typeof n !== 'object') return; if (predicate(n)) found.push(n); (n.children || []).forEach(walk); };
     walk(tree); return found;
   };
+  const flip = (label, value) => {
+    const row = findNodes(render(), n => n.type === 'Row' &&
+      (n.children || []).some(c => c.type === 'Switch') &&
+      findNodes(n, c => c.type === 'Text' && c.props.text === label).length)[0];
+    assert(row, label);
+    row.children.find(c => c.type === 'Switch').props.onCheckedChange(value);
+  };
+  for (const time of [false, true]) for (const date of [false, true]) {
+    flip('时间', time); flip('日期', date);
+    assert.equal(shared.loadSettings().injectTime, time);
+    assert.equal(shared.loadSettings().injectDate, date);
+    assert.equal(states.get('injectTime'), time);
+    assert.equal(states.get('injectDate'), date);
+  }
+  console.log('TIME_DATE_UI_SWITCHES_PASS');
   const buttons = label => findNodes(render(), n => n.type === 'Button' && n.props.text === label);
   const edit = (label, value, index = 0) => {
     const fields = findNodes(render(), n => n.type === 'TextField' && n.props.label === label);
@@ -326,6 +368,8 @@ global.ToolPkg = {
   shared.saveSettings({ anniversaries: [] }); states.set('anniversaries', []);
   edit('纪念日名称', '清空测试'); edit('纪念日日期', '08-19');
   await buttons('添加纪念日')[0].props.onClick(); assertFeedbackBefore('添加纪念日');
+  // Simulate distinct user clicks; anniversary IDs currently use Date.now().
+  await new Promise(resolve => setTimeout(resolve, 5));
   edit('纪念日名称', '保留测试'); edit('纪念日日期', '08-20');
   await buttons('添加纪念日')[0].props.onClick();
   edit('已保存的纪念日日期（留空不注入）', 'bad');
@@ -351,7 +395,7 @@ global.ToolPkg = {
 
   // With switches still enabled, cleared dates remain empty after reopening and emit no blocks.
   shared.saveSettings({ masterEnabled: true, boundCharacterCardIds: [], anniversariesEnabled: true, cycleEnabled: true, pregnancyEnabled: true,
-    injectTime: false, injectCalendar: false, injectWeather: false, injectLocation: false, injectBattery: false, injectDevice: false });
+    injectTime: false, injectDate: false, injectCalendar: false, injectWeather: false, injectLocation: false, injectBattery: false, injectDevice: false });
   const reopenedStates = new Map();
   const reopenedCtx = { UI, useState: (key, initial) => { if (!reopenedStates.has(key)) reopenedStates.set(key, initial); return [reopenedStates.get(key), value => reopenedStates.set(key, value)]; } };
   await registrations.ui[0].screen(reopenedCtx).props.onLoad();
@@ -360,5 +404,5 @@ global.ToolPkg = {
   assert.equal(await shared.appendEnvironmentToMessage('空日期测试', { type: 'character_card', id: 'card-a', name: '甲' }), null);
   console.log('UI_CLEAR_DATES_AND_LOCAL_FEEDBACK_PASS');
 
-  console.log('ENV_INJECTOR_V201_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
+  console.log('ENV_INJECTOR_V210_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
 })().catch(error => { console.error(error); process.exitCode = 1; });

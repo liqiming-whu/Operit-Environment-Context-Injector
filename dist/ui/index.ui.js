@@ -58,6 +58,7 @@ function Screen(ctx) {
     const weatherRefreshInterval = state(ctx, "weatherRefreshInterval", String(initial.weatherRefreshIntervalMinutes));
     const locationRefreshInterval = state(ctx, "locationRefreshInterval", String(initial.locationRefreshIntervalMinutes));
     const injectTime = state(ctx, "injectTime", initial.injectTime);
+    const injectDate = state(ctx, "injectDate", initial.injectDate);
     const injectWeather = state(ctx, "injectWeather", initial.injectWeather);
     const injectLocation = state(ctx, "injectLocation", initial.injectLocation);
     const injectBattery = state(ctx, "injectBattery", initial.injectBattery);
@@ -112,6 +113,7 @@ function Screen(ctx) {
         weatherRefreshInterval.set(String(next.weatherRefreshIntervalMinutes));
         locationRefreshInterval.set(String(next.locationRefreshIntervalMinutes));
         injectTime.set(next.injectTime);
+        injectDate.set(next.injectDate);
         injectWeather.set(next.injectWeather);
         injectLocation.set(next.injectLocation);
         injectBattery.set(next.injectBattery);
@@ -376,7 +378,9 @@ function Screen(ctx) {
         ]),
         title(ctx, "bolt", "注入项目"),
         card(ctx, [
-            toggle(ctx, "时间", "本地日期、时间、时区和星期", injectTime.value, value => patch({ injectTime: value })),
+            toggle(ctx, "时间", "本地时间和时区", injectTime.value, value => patch({ injectTime: value })),
+            divider(ctx),
+            toggle(ctx, "日期", "本地日期和星期", injectDate.value, value => patch({ injectDate: value })),
             divider(ctx),
             toggle(ctx, "天气", "当前天气、温度、湿度和风速", injectWeather.value, value => patch({ injectWeather: value })),
             divider(ctx),

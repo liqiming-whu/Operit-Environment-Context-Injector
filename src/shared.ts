@@ -25,6 +25,7 @@ export type EnvironmentInjectionSettings = {
   weatherRefreshIntervalMinutes: number;
   locationRefreshIntervalMinutes: number;
   injectTime: boolean;
+  injectDate: boolean;
   injectWeather: boolean;
   injectLocation: boolean;
   injectBattery: boolean;
@@ -63,6 +64,7 @@ export const DEFAULT_SETTINGS: EnvironmentInjectionSettings = {
   weatherRefreshIntervalMinutes: 30,
   locationRefreshIntervalMinutes: 10,
   injectTime: true,
+  injectDate: true,
   injectWeather: true,
   injectLocation: true,
   injectBattery: true,
@@ -164,6 +166,8 @@ function sanitizeSettings(input?: Partial<EnvironmentInjectionSettings> | null):
     weatherRefreshIntervalMinutes: clampInteger(input?.weatherRefreshIntervalMinutes, 5, 180, 30),
     locationRefreshIntervalMinutes: clampInteger(input?.locationRefreshIntervalMinutes, 5, 60, 10),
     injectTime: Boolean(input?.injectTime ?? DEFAULT_SETTINGS.injectTime),
+    // Legacy injectTime controlled both time and date.
+    injectDate: Boolean(input?.injectDate ?? input?.injectTime ?? DEFAULT_SETTINGS.injectDate),
     injectWeather: Boolean(input?.injectWeather ?? DEFAULT_SETTINGS.injectWeather),
     injectLocation: Boolean(input?.injectLocation ?? DEFAULT_SETTINGS.injectLocation),
     injectBattery: Boolean(input?.injectBattery ?? DEFAULT_SETTINGS.injectBattery),
@@ -301,21 +305,27 @@ function formatTimestamp(timestampMs: number): string {
     .format(new DateClass(timestampMs));
 }
 
-function buildTimeBlock(): string {
+function buildTimeBlock(now: any): string {
   const SimpleDateFormat = Java.type("java.text.SimpleDateFormat");
-  const DateClass = Java.type("java.util.Date");
   const LocaleClass = Java.type("java.util.Locale");
   const TimeZoneClass = Java.type("java.util.TimeZone");
   const locale = LocaleClass.getDefault();
-  const now = new DateClass();
   return [
     "【当前时间】",
-    new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", locale).format(now),
+    new SimpleDateFormat("HH:mm:ss", locale).format(now),
     `时区: ${TimeZoneClass.getDefault().getID()}`,
-    `星期: ${new SimpleDateFormat("EEEE", locale).format(now)}`,
   ].join("\n");
 }
 
+function buildDateBlock(now: any): string {
+  const SimpleDateFormat = Java.type("java.text.SimpleDateFormat");
+  const locale = Java.type("java.util.Locale").getDefault();
+  return [
+    "【当前日期】",
+    new SimpleDateFormat("yyyy-MM-dd", locale).format(now),
+    `星期: ${new SimpleDateFormat("EEEE", locale).format(now)}`,
+  ].join("\n");
+}
 function readBatteryBlock(): string {
   const IntentClass = Java.type("android.content.Intent");
   const IntentFilterClass = Java.type("android.content.IntentFilter");
@@ -698,7 +708,10 @@ export async function buildEnvironmentContent(
   const today = currentDateString();
   const userLabel = settings.userName || "用户";
   const characterLabel = clean(activeCharacterName, 80) || settings.characterName || "角色";
-  const timeContent = settings.injectTime ? buildTimeBlock() : "";
+  // Use one instant for both blocks at midnight.
+  const now = settings.injectTime || settings.injectDate ? new (Java.type("java.util.Date"))() : null;
+  const timeContent = settings.injectTime ? buildTimeBlock(now) : "";
+  const dateContent = settings.injectDate ? buildDateBlock(now) : "";
   let calendarContent = "";
   let weatherContent = "";
   let locationContent = "";
@@ -743,7 +756,7 @@ export async function buildEnvironmentContent(
     }
   }
 
-  const realityDetails = [timeContent, calendarContent, weatherContent, locationContent, batteryContent, deviceContent]
+  const realityDetails = [timeContent, dateContent, calendarContent, weatherContent, locationContent, batteryContent, deviceContent]
     .filter(content => content.trim());
   const realityBlock = realityDetails.length ? ["【现实环境信息】", ...realityDetails].join("\n\n") : "";
   return [

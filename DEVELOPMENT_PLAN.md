@@ -50,3 +50,12 @@
 - [x] TypeScript 与模拟宿主/UI 动作回归通过。
 - [x] v2.0.1 最终 8 文件包结构检查与 ToolPkg 烧录通过，related_load_errors={}；安装包 SHA-256 `808bb667890222b0413dc964fbe90dc09696b62844ed3083f13f462293671684` 与构建包一致。
 - [ ] 重启 Operit 验证局部提示、日期清空及两种真实 Hook。用户已授权发布 v2.0.1；发布不等同于实机回归确认。
+
+## v2.1.0 时间与日期拆分（2026-10-13）
+- [x] 时间/时区与日期/星期独立开关，旧配置继承原时间开关，日历不变。
+- [x] TypeScript 编译、产物语法、四组合、迁移、模拟 UI 动作及原有回归通过；git diff --check 通过。
+- [x] 8 文件 ToolPkg 归档完整性通过：/sdcard/Download/Operit/ToolPkgDev/environment-context-injector-v2.1.0.toolpkg。
+- [x] 用户授权后完成 v2.1.0 烧录，插件 enabled=true，related_load_errors={}；安装归档与构建包 SHA-256 一致：1dbf37364d3fec098312f2a896676e3eaac13b04f7e1fff808d40d8b8949a421。
+- [x] 真实消息附件验证日期块和星期存在、当前时间块与时区字段不存在（仅记录技术结果，不保存附件原文）。
+- [ ] 其他开关组合的真实 UI 与两种 Hook 完整回归仍待验证；GitHub Release 单独发布。
+- 测试说明：纪念日用 Date.now() 生成 ID，模拟连续新增间隔 5ms，避免同毫秒 ID 冲突；生产唯一 ID 改进不在本次范围。
