@@ -251,7 +251,7 @@ function Screen(ctx) {
             notify("anniversary", "请填写纪念日名称，以及 MM-DD 或 YYYY-MM-DD 格式的日期。");
             return;
         }
-        const next = [...anniversaries.value, { id: `event-${Date.now()}`, name, date, type: "anniversary" }];
+        const next = [...anniversaries.value, { id: (0, shared_1.createAnniversaryId)(anniversaries.value), name, date, type: "anniversary" }];
         if (!patch({ anniversaries: next }, "anniversary", "纪念日已添加。"))
             return;
         anniversaryName.set("");

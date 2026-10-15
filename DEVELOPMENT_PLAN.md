@@ -58,4 +58,16 @@
 - [x] 用户授权后完成 v2.1.0 烧录，插件 enabled=true，related_load_errors={}；安装归档与构建包 SHA-256 一致：1dbf37364d3fec098312f2a896676e3eaac13b04f7e1fff808d40d8b8949a421。
 - [x] 真实消息附件验证日期块和星期存在、当前时间块与时区字段不存在（仅记录技术结果，不保存附件原文）。
 - [ ] 其他开关组合的真实 UI 与两种 Hook 完整回归仍待验证；GitHub Release 单独发布。
-- 测试说明：纪念日用 Date.now() 生成 ID，模拟连续新增间隔 5ms，避免同毫秒 ID 冲突；生产唯一 ID 改进不在本次范围。
+- v2.1.0 当时的测试说明：纪念日用 Date.now() 生成 ID，模拟连续新增间隔 5ms，未覆盖碰撞。该遗留风险已由下面的后续修复处理；历史验证范围不变。
+
+## v2.1.1 纪念日 ID 冲突修复（2026-10-16，本地时间）
+- [x] 基线 `220b2bc`；此前分别用隔离编译产物和当前 v2.1.0 安装归档复现：同毫秒两条记录同 ID；重载后删除第二条会删除两条；保存第一条日期会修改两条；清空第一条日期会移除两条。真实用户设置未参与测试。
+- [x] `src/shared.ts` 增加 `createAnniversaryId()`，依据当前列表选择未被占用的时间戳/递增后缀编号；`src/ui/index.ui.ts` 新增事件复用它。只同步对应的两个 dist 文件，不改历史 ID、设置结构、日期编辑或删除语义。
+- [x] 在现有 `tests/test_core.js` 的 UI/SharedPreferences 替身上增加六组固定时钟回归，移除旧 5ms 等待。模拟新页面执行 onLoad 后再操作，避免把未加载默认状态当成历史设置。
+- [x] 同一最终测试在原版生产文件的隔离副本上因重复编号断言失败（exit 1）；补丁后完整测试通过（exit 0）。六组覆盖：新增唯一编号/Compose 行 key/删除与重载；日期编辑/清空隔离；50 次新增并逐次重载；历史基础编号/后缀/重复 ID/缺省编号兼容；时钟回退；无效输入与保存失败后重试。
+- [x] `tsc -p tsconfig.json`、五个 dist JS 和测试文件的 `node --check`、完整 `node tests/test_core.js`、8 文件 ToolPkg 归档结构/内容一致性/解包后完整回归，以及 `git diff --check` 全通过；未新增依赖。
+- [x] 本地诊断保存在 `.git/diagnostics/anniversary-fix/`（不入库）；已同步共享存储部署副本，并构建 `/sdcard/Download/Operit/ToolPkgDev/environment-context-injector-v2.1.1.toolpkg`，根目录 8 文件归档结构通过。
+- [x] 用户授权后将版本升为 2.1.1 并通过 `operit_editor:debug_install_toolpkg` 烧录；`enabled=true`、`related_load_errors={}`，没有重置子包状态或迁移真实设置。安装归档与构建包逐字节一致，SHA-256 `54d782a9ffee175319dc943f2811f112afe4d82d18cdc344b42e22fba1916e05`；安装归档解包后的完整模拟回归也通过。未创建标签或 GitHub Release。
+- [x] 烧录前的 v2.1.0 安装包已备份到 `/sdcard/Download/Operit/ToolPkgDev/environment-context-injector-backups/installed-v2.1.0-before-v2.1.1-20261015T165225Z.toolpkg`，原 SHA-256 为 `1dbf37364d3fec098312f2a896676e3eaac13b04f7e1fff808d40d8b8949a421`，保留回滚能力。
+- [ ] 用户重启 Operit 后，验证真实 Compose UI 与两种 Hook；烧录/加载检查及安装包模拟测试已通过，但不等同于真实 QuickJS UI 回归，旧页面实例可能仍有缓存。
+- 旧数据边界：已保存重复 ID 原样保留；新编号避开它们但不会自动拆分，旧记录的删除、改日期、清空及编辑草稿键仍按旧 ID 匹配，可能影响全部同编号记录。历史数据修复必须另行备份和确认；没有证据表明真实用户已经发生误删。

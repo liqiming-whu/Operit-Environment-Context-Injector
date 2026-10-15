@@ -146,6 +146,15 @@ function normalizeFullDate(value: unknown): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 }
 
+// Allocate against the current records; the clock alone is not a unique ID.
+export function createAnniversaryId(anniversaries: readonly AnniversarySetting[]): string {
+  const usedIds = new Set(anniversaries.map(event => event.id));
+  const base = `event-${Date.now()}`;
+  let id = base;
+  for (let suffix = 1; usedIds.has(id); suffix++) id = `${base}-${suffix}`;
+  return id;
+}
+
 function sanitizeAnniversaries(value: unknown): AnniversarySetting[] {
   return (Array.isArray(value) ? value : []).map((event: any, index: number) => ({
     id: clean(event?.id || `event-${index}`, 80),

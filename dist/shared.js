@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_SETTINGS = void 0;
 exports.getAppContext = getAppContext;
+exports.createAnniversaryId = createAnniversaryId;
 exports.loadSettings = loadSettings;
 exports.saveSettings = saveSettings;
 exports.getInjectionEnabled = getInjectionEnabled;
@@ -89,6 +90,15 @@ function normalizeDateInput(value) {
 function normalizeFullDate(value) {
     const text = String(value || "").trim();
     return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+// Allocate against the current records; the clock alone is not a unique ID.
+function createAnniversaryId(anniversaries) {
+    const usedIds = new Set(anniversaries.map(event => event.id));
+    const base = `event-${Date.now()}`;
+    let id = base;
+    for (let suffix = 1; usedIds.has(id); suffix++)
+        id = `${base}-${suffix}`;
+    return id;
 }
 function sanitizeAnniversaries(value) {
     return (Array.isArray(value) ? value : []).map((event, index) => ({

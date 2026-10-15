@@ -1,6 +1,7 @@
 import type { ComposeDslContext, ComposeNode } from "../../types/compose-dsl";
 import {
   buildEnvironmentPreview,
+  createAnniversaryId,
   DEFAULT_SETTINGS,
   loadSettings,
   listCharacterCards,
@@ -299,7 +300,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
       notify("anniversary", "请填写纪念日名称，以及 MM-DD 或 YYYY-MM-DD 格式的日期。");
       return;
     }
-    const next = [...anniversaries.value, { id: `event-${Date.now()}`, name, date, type: "anniversary" as const }];
+    const next = [...anniversaries.value, { id: createAnniversaryId(anniversaries.value), name, date, type: "anniversary" as const }];
     if (!patch({ anniversaries: next }, "anniversary", "纪念日已添加。")) return;
     anniversaryName.set("");
     anniversaryDate.set("");

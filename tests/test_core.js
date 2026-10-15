@@ -364,12 +364,143 @@ global.ToolPkg = {
   await buttons('保存经期和孕期')[0].props.onClick();
   for (const key of ['userCycleStartDate', 'characterCycleStartDate', 'pregnancyStartDate']) assert.equal(shared.loadSettings()[key], '');
 
+  // Collision regressions: real UI callbacks, production JSON settings path, mocked host only.
+  const settingsBeforeIdTests = shared.loadSettings();
+  const realDateNow = Date.now;
+  const collisionTime = 1792022400000;
+  let collisionNow = collisionTime;
+  const anniversaryDateLabel = '已保存的纪念日日期（留空不注入）';
+  const openAnniversaryUi = () => {
+    const localStates = new Map();
+    const localCtx = { UI, useState: (key, initial) => {
+      if (!localStates.has(key)) localStates.set(key, initial);
+      return [localStates.get(key), value => localStates.set(key, value)];
+    } };
+    const draw = () => registrations.ui[0].screen(localCtx);
+    const fields = label => findNodes(draw(), n => n.type === 'TextField' && n.props.label === label);
+    return {
+      draw,
+      edit(label, value, index = 0) { assert(fields(label)[index], label); fields(label)[index].props.onValueChange(value); },
+      async click(label, index = 0) {
+        const node = findNodes(draw(), n => n.type === 'Button' && n.props.text === label)[index];
+        assert(node, label); await node.props.onClick();
+      },
+      async add(name, date = '01-01') {
+        this.edit('纪念日名称', name); this.edit('纪念日日期', date);
+        await this.click('添加纪念日');
+      },
+    };
+  };
+  const resetAnniversaries = async (events = []) => {
+    shared.saveSettings({ anniversaries: events });
+    const ui = openAnniversaryUi();
+    await ui.draw().props.onLoad();
+    return ui;
+  };
+  const reopenAnniversaries = async () => {
+    // Round-trip the mock SharedPreferences bytes, then recreate all Compose state.
+    stored.set(settingsKey, JSON.stringify(JSON.parse(stored.get(settingsKey))));
+    const ui = openAnniversaryUi();
+    await ui.draw().props.onLoad();
+    return ui;
+  };
+  Date.now = () => collisionNow;
+  try {
+    let ui = await resetAnniversaries();
+    await ui.add('第一条', '01-01'); await ui.add('第二条', '02-02');
+    const pair = shared.loadSettings().anniversaries;
+    assert.equal(pair.length, 2);
+    assert.notEqual(pair[0].id, pair[1].id, 'same-millisecond additions must have distinct IDs');
+    const rowKeys = findNodes(ui.draw(), n => n.type === 'Column' && String(n.props.key || '').startsWith('event-')).map(n => n.props.key);
+    assert.equal(new Set(rowKeys).size, 2, 'Compose row keys must be distinct');
+    const savedPairBytes = stored.get(settingsKey);
+    ui = await reopenAnniversaries();
+    assert.deepEqual(shared.loadSettings().anniversaries, pair);
+    await ui.click('删除', 1);
+    assert.deepEqual(shared.loadSettings().anniversaries, [pair[0]]);
+    await reopenAnniversaries();
+    assert.deepEqual(shared.loadSettings().anniversaries, [pair[0]]);
+    assert.deepEqual(JSON.parse(savedPairBytes).anniversaries, pair, 'previous snapshot must not be mutated');
+    console.log('ANNIVERSARY_ID_UNIQUE_DELETE_RELOAD_PASS');
+
+    ui = await resetAnniversaries();
+    await ui.add('日期甲', '01-01'); await ui.add('日期乙', '02-02');
+    const originalPair = shared.loadSettings().anniversaries;
+    ui.edit(anniversaryDateLabel, '03-03', 0); await ui.click('保存纪念日日期', 0);
+    assert.deepEqual(shared.loadSettings().anniversaries, [{ ...originalPair[0], date: '03-03' }, originalPair[1]]);
+    ui = await reopenAnniversaries();
+    ui.edit(anniversaryDateLabel, '', 0); await ui.click('保存纪念日日期', 0);
+    assert.deepEqual(shared.loadSettings().anniversaries, [originalPair[1]]);
+    ui = await reopenAnniversaries();
+    assert.deepEqual(shared.loadSettings().anniversaries, [originalPair[1]]);
+    console.log('ANNIVERSARY_EDIT_CLEAR_ISOLATION_PASS');
+
+    ui = await resetAnniversaries();
+    for (let index = 0; index < 50; index++) {
+      await ui.add(`连续新增${index}`);
+      ui = await reopenAnniversaries();
+    }
+    const fifty = shared.loadSettings().anniversaries;
+    assert.equal(fifty.length, 50);
+    assert.equal(new Set(fifty.map(event => event.id)).size, 50);
+    await ui.click('删除', 24);
+    await reopenAnniversaries();
+    assert.deepEqual(shared.loadSettings().anniversaries, fifty.filter((_, index) => index !== 24));
+    console.log('ANNIVERSARY_FIFTY_FIXED_CLOCK_RELOAD_PASS');
+
+    const base = `event-${collisionTime}`;
+    const legacyInput = [base, `${base}-1`, `${base}-2`, `${base}-4`, 'custom-legacy', base]
+      .map((id, index) => ({ id, name: `历史${index}`, date: '01-01', type: 'anniversary' }));
+    legacyInput.push({ name: '无编号历史', date: '02-02', type: 'birthday' });
+    const legacyBytes = JSON.stringify(legacyInput);
+    ui = await resetAnniversaries(legacyInput);
+    const normalizedLegacy = shared.loadSettings().anniversaries;
+    await ui.add('新记录');
+    const withNew = shared.loadSettings().anniversaries;
+    assert.deepEqual(withNew.slice(0, normalizedLegacy.length), normalizedLegacy, 'do not rewrite historical IDs');
+    assert(!normalizedLegacy.some(event => event.id === withNew.at(-1).id));
+    assert.equal(normalizedLegacy[0].id, normalizedLegacy[5].id, 'existing duplicates remain unchanged');
+    assert.equal(normalizedLegacy[6].id, 'event-6', 'retain legacy missing-ID fallback');
+    assert.equal(JSON.stringify(legacyInput), legacyBytes);
+    ui = await reopenAnniversaries();
+    await ui.click('删除', withNew.length - 1);
+    assert.deepEqual(shared.loadSettings().anniversaries, normalizedLegacy);
+    console.log('ANNIVERSARY_EXISTING_IDS_AND_LEGACY_COMPAT_PASS');
+
+    ui = await resetAnniversaries();
+    await ui.add('回退前甲'); collisionNow++;
+    await ui.add('回退前乙'); collisionNow = collisionTime;
+    await ui.add('回退后');
+    const rollback = shared.loadSettings().anniversaries;
+    assert.equal(new Set(rollback.map(event => event.id)).size, 3);
+    await ui.click('删除', 0);
+    assert.deepEqual(shared.loadSettings().anniversaries, rollback.slice(1));
+    console.log('ANNIVERSARY_CLOCK_ROLLBACK_PASS');
+
+    ui = await resetAnniversaries([{ id: 'keep', name: '保留', date: '01-01', type: 'anniversary' }]);
+    const beforeInvalid = stored.get(settingsKey);
+    await ui.add('', '01-01'); await ui.add('无效', 'bad');
+    assert.equal(stored.get(settingsKey), beforeInvalid);
+    const savedEdit = prefs.edit;
+    prefs.edit = () => { throw new Error('mock anniversary write failure'); };
+    try {
+      await ui.add('写入失败', '03-03');
+      assert.equal(stored.get(settingsKey), beforeInvalid);
+      assert(findNodes(ui.draw(), n => n.type === 'Text' && String(n.props.text).includes('保存失败')).length);
+    } finally { prefs.edit = savedEdit; }
+    await ui.click('添加纪念日');
+    assert.deepEqual(shared.loadSettings().anniversaries.map(event => event.name), ['保留', '写入失败']);
+    console.log('ANNIVERSARY_INVALID_AND_FAILED_SAVE_PASS');
+  } finally {
+    Date.now = realDateNow;
+    shared.saveSettings(settingsBeforeIdTests);
+  }
+
   // Existing custom anniversaries can now be cleared individually; other entries survive.
   shared.saveSettings({ anniversaries: [] }); states.set('anniversaries', []);
   edit('纪念日名称', '清空测试'); edit('纪念日日期', '08-19');
   await buttons('添加纪念日')[0].props.onClick(); assertFeedbackBefore('添加纪念日');
-  // Simulate distinct user clicks; anniversary IDs currently use Date.now().
-  await new Promise(resolve => setTimeout(resolve, 5));
+  // Consecutive user clicks must not depend on a clock delay.
   edit('纪念日名称', '保留测试'); edit('纪念日日期', '08-20');
   await buttons('添加纪念日')[0].props.onClick();
   edit('已保存的纪念日日期（留空不注入）', 'bad');
@@ -404,5 +535,5 @@ global.ToolPkg = {
   assert.equal(await shared.appendEnvironmentToMessage('空日期测试', { type: 'character_card', id: 'card-a', name: '甲' }), null);
   console.log('UI_CLEAR_DATES_AND_LOCAL_FEEDBACK_PASS');
 
-  console.log('ENV_INJECTOR_V210_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
+  console.log('ENV_INJECTOR_TEST_PASS', { states: states.size, contentLength: preview.length, cardsLoaded: 2, geocodingRequests, reverseGeocodingRequests, locationRequests, weatherRequests });
 })().catch(error => { console.error(error); process.exitCode = 1; });
